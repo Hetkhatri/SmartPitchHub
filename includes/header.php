@@ -15,7 +15,7 @@
                 <div class="nav-logo">
                     <a href="index.php" class="logo">
                         <i class="fas fa-rocket"></i>
-                        Startup Pitch Hub
+                        Smart Pitch Hub
                     </a>
                 </div>
                 <div class="nav-menu">
