@@ -1,10 +1,10 @@
 <?php
 session_start();
-// For demo purposes, set session if not set
+// Check if user is logged in
 if (!isset($_SESSION['user_role'])) {
-    $_SESSION['user_role'] = 'investor';
-    $_SESSION['user_name'] = 'Demo User';
-    $_SESSION['user_id'] = 999;
+    // Redirect to login if not authenticated
+    header('Location: login.php?role=investor');
+    exit();
 }
 ?>
 <?php include 'includes/header.php'; ?>
@@ -36,10 +36,10 @@ if (!isset($_SESSION['user_role'])) {
             <div class="form-group" style="min-width: 200px;">
                 <select class="form-control" id="fundingFilter">
                     <option value="">All Funding Ranges</option>
-                    <option value="0-100000">Under $100k</option>
-                    <option value="100000-500000">$100k - $500k</option>
-                    <option value="500000-1000000">$500k - $1M</option>
-                    <option value="1000000+">$1M+</option>
+                    <option value="0-100000">Under ₹100k</option>
+                    <option value="100000-500000">₹100k - ₹500k</option>
+                    <option value="500000-1000000">₹500k - ₹1M</option>
+                    <option value="1000000+">₹1M+</option>
                 </select>
             </div>
         </div>
@@ -58,7 +58,7 @@ if (!isset($_SESSION['user_role'])) {
             
             <div class="pitch-stats" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0;">
                 <div style="text-align: center;">
-                    <div style="font-size: 1.25rem; font-weight: 600; color: #667eea;">$500K</div>
+                    <div style="font-size: 1.25rem; font-weight: 600; color: #667eea;">₹500K</div>
                     <div style="font-size: 0.875rem; color: #6b7280;">Funding Goal</div>
                 </div>
                 <div style="text-align: center;">
@@ -84,7 +84,7 @@ if (!isset($_SESSION['user_role'])) {
             
             <div class="pitch-stats" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0;">
                 <div style="text-align: center;">
-                    <div style="font-size: 1.25rem; font-weight: 600; color: #667eea;">$250K</div>
+                    <div style="font-size: 1.25rem; font-weight: 600; color: #667eea;">₹250K</div>
                     <div style="font-size: 0.875rem; color: #6b7280;">Funding Goal</div>
                 </div>
                 <div style="text-align: center;">
@@ -110,7 +110,7 @@ if (!isset($_SESSION['user_role'])) {
             
             <div class="pitch-stats" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0;">
                 <div style="text-align: center;">
-                    <div style="font-size: 1.25rem; font-weight: 600; color: #667eea;">$1.2M</div>
+                    <div style="font-size: 1.25rem; font-weight: 600; color: #667eea;">₹1.2M</div>
                     <div style="font-size: 0.875rem; color: #6b7280;">Funding Goal</div>
                 </div>
                 <div style="text-align: center;">
@@ -136,7 +136,7 @@ if (!isset($_SESSION['user_role'])) {
             
             <div class="pitch-stats" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0;">
                 <div style="text-align: center;">
-                    <div style="font-size: 1.25rem; font-weight: 600; color: #667eea;">$750K</div>
+                    <div style="font-size: 1.25rem; font-weight: 600; color: #667eea;">₹750K</div>
                     <div style="font-size: 0.875rem; color: #6b7280;">Funding Goal</div>
                 </div>
                 <div style="text-align: center;">
@@ -162,7 +162,7 @@ if (!isset($_SESSION['user_role'])) {
             
             <div class="pitch-stats" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0;">
                 <div style="text-align: center;">
-                    <div style="font-size: 1.25rem; font-weight: 600; color: #667eea;">$300K</div>
+                    <div style="font-size: 1.25rem; font-weight: 600; color: #667eea;">₹300K</div>
                     <div style="font-size: 0.875rem; color: #6b7280;">Funding Goal</div>
                 </div>
                 <div style="text-align: center;">
@@ -188,7 +188,7 @@ if (!isset($_SESSION['user_role'])) {
             
             <div class="pitch-stats" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0;">
                 <div style="text-align: center;">
-                    <div style="font-size: 1.25rem; font-weight: 600; color: #667eea;">$600K</div>
+                    <div style="font-size: 1.25rem; font-weight: 600; color: #667eea;">₹600K</div>
                     <div style="font-size: 0.875rem; color: #6b7280;">Funding Goal</div>
                 </div>
                 <div style="text-align: center;">

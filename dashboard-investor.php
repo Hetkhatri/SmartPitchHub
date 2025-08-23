@@ -2,10 +2,9 @@
 // Start session and check if user is logged in as investor
 session_start();
 if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'investor') {
-    // For demo purposes, we'll set the session if not set
-    $_SESSION['user_role'] = 'investor';
-    $_SESSION['user_name'] = 'John Investor';
-    $_SESSION['user_id'] = 1;
+    // Redirect to login if not authenticated as investor
+    header('Location: login.php?role=investor');
+    exit();
 }
 ?>
 <?php include 'includes/header.php'; ?>
@@ -14,9 +13,8 @@ if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'investor') {
     <!-- Dashboard Header -->
     <div class="dashboard-header">
         <h1 class="dashboard-title">Investor Dashboard</h1>
-        <p>Welcome back, <?php echo $_SESSION['user_name']; ?>! Here's your investment overview.</p>
+        <p>Welcome back, <?php echo $_SESSION['username']; ?>! Here's your investment overview.</p>
     </div>
-
     <!-- Statistics -->
     <div class="dashboard-stats">
         <div class="stat-card">

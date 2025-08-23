@@ -2,11 +2,9 @@
 // Start session and check if user is logged in as entrepreneur
 session_start();
 if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'entrepreneur') {
-    // For demo purposes, we'll set the session if not set
-    $_SESSION['user_role'] = 'entrepreneur';
-    $_SESSION['user_name'] = 'Sarah Entrepreneur';
-    $_SESSION['user_id'] = 2;
-    $_SESSION['startup_name'] = 'InnovateTech';
+    // Redirect to login if not authenticated as entrepreneur
+    header('Location: login.php?role=entrepreneur');
+    exit();
 }
 ?>
 <?php include 'includes/header.php'; ?>

@@ -1,5 +1,6 @@
 <?php
 session_start();
+include 'db.php';
 
 // Handle login form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -7,23 +8,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $password = $_POST['password'];
     $role = $_POST['role'];
     
-    // Simple demo authentication (in real app, validate against database)
+    // Validate against database
     if (!empty($email) && !empty($password)) {
-        $_SESSION['user_role'] = $role;
-        $_SESSION['user_email'] = $email;
-        
-        // Set demo user data based on role
+        // Query database to get user information
         if ($role === 'investor') {
-            $_SESSION['user_name'] = 'John Investor';
-            $_SESSION['user_id'] = 1;
-            header('Location: dashboard-investor.php');
+            $stmt = $conn->prepare("SELECT id, name, password FROM investors WHERE email = ?");
         } else {
-            $_SESSION['user_name'] = 'Sarah Entrepreneur';
-            $_SESSION['user_id'] = 2;
-            $_SESSION['startup_name'] = 'InnovateTech';
-            header('Location: dashboard-entrepreneur.php');
+            $stmt = $conn->prepare("SELECT id, name, password, startup_name FROM entrepreneurs WHERE email = ?");
         }
-        exit();
+        
+        $stmt->bind_param("s", $email);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        
+        if ($result->num_rows > 0) {
+            $user = $result->fetch_assoc();
+            
+            // Verify password (assuming passwords are hashed)
+            if (password_verify($password, $user['password'])) {
+                $_SESSION['user_role'] = $role;
+                $_SESSION['user_email'] = $email;
+                $_SESSION['user_name'] = $user['name'];
+                $_SESSION['username'] = $user['name'];
+                $_SESSION['user_id'] = $user['id'];
+                
+                if ($role === 'investor') {
+                    header('Location: dashboard-investor.php');
+                } else {
+                    $_SESSION['startup_name'] = $user['startup_name'] ?? 'My Startup';
+                    header('Location: dashboard-entrepreneur.php');
+                }
+                exit();
+            } else {
+                $_SESSION['login_error'] = "Invalid email or password";
+            }
+        } else {
+            $_SESSION['login_error'] = "Invalid email or password";
+        }
+    } else {
+        $_SESSION['login_error'] = "Please fill in all fields";
     }
 }
 
@@ -40,6 +63,16 @@ $roleTitle = ucfirst($role);
             <h2><?php echo $roleTitle; ?> Login</h2>
             <p>Sign in to access your <?php echo $role; ?> dashboard</p>
         </div>
+
+        <?php if (isset($_SESSION['login_error'])): ?>
+            <div class="alert alert-danger" style="background: #fee2e2; border: 1px solid #fecaca; color: #dc2626; padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem;">
+                <i class="fas fa-exclamation-circle"></i>
+                <?php 
+                    echo $_SESSION['login_error']; 
+                    unset($_SESSION['login_error']);
+                ?>
+            </div>
+        <?php endif; ?>
 
         <form method="POST" action="login.php">
             <input type="hidden" name="role" value="<?php echo $role; ?>">
@@ -68,14 +101,6 @@ $roleTitle = ucfirst($role);
             </div>
         </form>
 
-        <!-- Demo Credentials Note -->
-        <div style="margin-top: 2rem; padding: 1rem; background: #f8fafc; border-radius: 8px; border-left: 4px solid #f59e0b;">
-            <h4 style="color: #f59e0b; margin-bottom: 0.5rem;">Demo Note</h4>
-            <p style="font-size: 0.875rem; margin: 0; color: #6b7280;">
-                This is a demo login. You can use any email and password to login. 
-                The system will automatically create a demo <?php echo $role; ?> account.
-            </p>
-        </div>
     </div>
 </div>
 

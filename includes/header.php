@@ -28,7 +28,7 @@
                         <?php if ($_SESSION['user_role'] === 'investor'): ?>
                             <a href="dashboard-investor.php" class="nav-link btn-primary">Investor Dashboard</a>
                         <?php elseif ($_SESSION['user_role'] === 'entrepreneur'): ?>
-                            <a href="dashboard-entrepreneur.php" class="nav-link btn-primary">Pitch Dashboard</a>
+                            <a href="dashboard-entrepreneur.php" class="nav-link btn-primary">Entrepreneur Dashboard</a>
                         <?php endif; ?>
                         <a href="logout.php" class="nav-link btn-secondary">Logout</a>
                     <?php else: ?>
@@ -46,5 +46,4 @@
             </div>
         </nav>
     </header>
-
     <main>

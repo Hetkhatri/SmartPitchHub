@@ -1,10 +1,9 @@
 </main>
-
     <footer class="footer">
         <div class="footer-container">
             <div class="footer-content">
                 <div class="footer-section">
-                    <h3>Startup Pitch Hub</h3>
+                    <h3>Smart Pitch Hub</h3>
                     <p>Bridging the gap between innovative ideas and funding opportunities. Connect, collaborate, and create the future together.</p>
                 </div>
                 
@@ -29,8 +28,8 @@
                 
                 <div class="footer-section">
                     <h4>Contact Info</h4>
-                    <p><i class="fas fa-envelope"></i> info@startuppitchhub.com</p>
-                    <p><i class="fas fa-phone"></i> +1 (555) 123-4567</p>
+                    <p><i class="fas fa-envelope"></i> info@smartpitchhub.com</p>
+                    <p><i class="fas fa-phone"></i> +91 9173588345</p>
                     <div class="social-links">
                         <a href="#"><i class="fab fa-facebook"></i></a>
                         <a href="#"><i class="fab fa-twitter"></i></a>
@@ -41,7 +40,7 @@
             </div>
             
             <div class="footer-bottom">
-                <p>&copy; 2024 Startup Pitch Hub. All rights reserved.</p>
+                <p>&copy; 2025 Smart Pitch Hub. All rights reserved.</p>
             </div>
         </div>
     </footer>
