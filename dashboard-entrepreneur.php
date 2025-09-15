@@ -1,4 +1,4 @@
-<?php
+ppr<?php
 // Start session and check if user is logged in as entrepreneur
 session_start();
 if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'entrepreneur') {
@@ -6,35 +6,158 @@ if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'entrepreneur')
     header('Location: login.php?role=entrepreneur');
     exit();
 }
+
+include 'includes/header.php';
+include 'db.php';
+
+$userId = $_SESSION['user_id']; // Assuming user_id is stored in session
+
+// Fetch entrepreneur's pitches
+$pitchesQuery = $conn->prepare("SELECT * FROM pitches WHERE entrepreneur_id = ? AND status != 'deleted' ORDER BY created_at DESC");
+$pitchesQuery->bind_param("i", $userId);
+$pitchesQuery->execute();
+$pitchesResult = $pitchesQuery->get_result();
+
+// Calculate statistics
+$statsQuery = $conn->prepare("
+    SELECT 
+        COUNT(*) as total_pitches,
+        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_pitches,
+        0 as total_views,
+        0 as investor_likes,
+        (SELECT COUNT(*) FROM investments i JOIN pitches p ON i.pitch_id = p.id WHERE p.entrepreneur_id = ?) as expressions_of_interest
+    FROM pitches
+    WHERE entrepreneur_id = ? AND status != 'deleted'
+");
+$statsQuery->bind_param("ii", $userId, $userId);
+$statsQuery->execute();
+$stats = $statsQuery->get_result()->fetch_assoc();
+
+// Fetch investor interest expressions
+$interestQuery = $conn->prepare("
+    SELECT i.id, u.name as investor_name, p.startup_name as pitch_title, i.created_at as interest_date, i.status
+    FROM investments i
+    JOIN users u ON i.investor_id = u.id
+    JOIN pitches p ON i.pitch_id = p.id
+    WHERE p.entrepreneur_id = ?
+    ORDER BY i.created_at DESC
+    LIMIT 10
+");
+$interestQuery->bind_param("i", $userId);
+$interestQuery->execute();
+$interestResult = $interestQuery->get_result();
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_pitch'])) {
+    $startup_name = $_POST['startup_name'];
+    $category = $_POST['category'];
+    $funding_goal = $_POST['funding_goal'];
+    $short_description = $_POST['short_description'];
+    $detailed_pitch = $_POST['detailed_pitch'];
+    // When publish_now is clicked, insert into pending_pitches for admin approval
+    $status = isset($_POST['publish_now']) && $_POST['publish_now'] === 'on' ? 'pending' : 'draft';
+
+    if ($status === 'pending') {
+        $stmt = $conn->prepare("INSERT INTO pending_pitches (startup_name, description, category, funding_goal, entrepreneur_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())");
+        $stmt->bind_param("sssdis", $startup_name, $short_description, $category, $funding_goal, $userId, $status);
+    } else {
+        $stmt = $conn->prepare("INSERT INTO pitches (startup_name, description, category, funding_goal, entrepreneur_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())");
+        $stmt->bind_param("sssdis", $startup_name, $short_description, $category, $funding_goal, $userId, $status);
+    }
+
+    if ($stmt->execute()) {
+        $message = "Pitch created successfully";
+        header("Location: dashboard-entrepreneur.php");
+        exit();
+    } else {
+        $error = "Failed to create pitch";
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_pitch'])) {
+    $pitch_id = $_POST['pitch_id'];
+    $startup_name = $_POST['startup_name'];
+    $category = $_POST['category'];
+    $funding_goal = $_POST['funding_goal'];
+    $short_description = $_POST['short_description'];
+    $detailed_pitch = $_POST['detailed_pitch'];
+    // Fix: check if publish_now is set and true, else draft
+    // When publish_now is clicked, set status to 'pending' for admin approval
+    $status = isset($_POST['publish_now']) && $_POST['publish_now'] === 'on' ? 'pending' : 'draft';
+
+    $stmt = $conn->prepare("UPDATE pitches SET startup_name = ?, description = ?, category = ?, funding_goal = ?, status = ?, updated_at = NOW() WHERE id = ? AND entrepreneur_id = ?");
+    $stmt->bind_param("sssdsii", $startup_name, $short_description, $category, $funding_goal, $status, $pitch_id, $userId);
+
+    if ($stmt->execute()) {
+        $message = "Pitch updated successfully";
+        header("Location: dashboard-entrepreneur.php");
+        exit();
+    } else {
+        $error = "Failed to update pitch";
+    }
+}
+
+// Handle pitch actions
+if (isset($_GET['action']) && isset($_GET['pitch_id'])) {
+    $action = $_GET['action'];
+    $pitchId = $_GET['pitch_id'];
+
+    if ($action === 'delete') {
+        $stmt = $conn->prepare("UPDATE pitches SET status = 'deleted' WHERE id = ? AND entrepreneur_id = ?");
+        $stmt->bind_param("ii", $pitchId, $userId);
+        $stmt->execute();
+        $message = "Pitch deleted successfully";
+    } elseif ($action === 'publish') {
+        $stmt = $conn->prepare("UPDATE pitches SET status = 'pending' WHERE id = ? AND entrepreneur_id = ?");
+        $stmt->bind_param("ii", $pitchId, $userId);
+        $stmt->execute();
+        $message = "Pitch submitted for approval";
+    }
+}
+
+// Fetch recent activity (simplified example)
+$activityQuery = $conn->prepare("
+    SELECT 'investment' as type, COUNT(*) as count, MAX(i.created_at) as last_date 
+    FROM investments i 
+    JOIN pitches p ON i.pitch_id = p.id 
+    WHERE p.entrepreneur_id = ?
+    UNION ALL
+    SELECT 'pitch_created' as type, COUNT(*) as count, MAX(created_at) as last_date 
+    FROM pitches 
+    WHERE entrepreneur_id = ?
+    ORDER BY last_date DESC
+    LIMIT 5
+");
+$activityQuery->bind_param("ii", $userId, $userId);
+$activityQuery->execute();
+$activityResult = $activityQuery->get_result();
 ?>
-<?php include 'includes/header.php'; ?>
 
 <div class="dashboard">
     <!-- Dashboard Header -->
     <div class="dashboard-header">
         <h1 class="dashboard-title">Entrepreneur Dashboard</h1>
-        <p>Welcome back, <?php echo $_SESSION['user_name']; ?>! Manage your startup <?php echo $_SESSION['startup_name']; ?> and track investor interest.</p>
+        <p>Welcome back, <?php echo htmlspecialchars($_SESSION['user_name']); ?>! Manage your startup <?php echo htmlspecialchars($_SESSION['startup_name']); ?> and track investor interest.</p>
     </div>
 
     <!-- Statistics -->
     <div class="dashboard-stats">
         <div class="stat-card">
-            <div class="stat-number" data-target="3">0</div>
+            <div class="stat-number"><?php echo $stats['active_pitches'] ?? 0; ?></div>
             <div class="stat-label">Active Pitches</div>
         </div>
         
         <div class="stat-card">
-            <div class="stat-number" data-target="42">0</div>
+            <div class="stat-number"><?php echo $stats['total_views'] ?? 0; ?></div>
             <div class="stat-label">Total Views</div>
         </div>
         
         <div class="stat-card">
-            <div class="stat-number" data-target="15">0</div>
+            <div class="stat-number"><?php echo $stats['investor_likes'] ?? 0; ?></div>
             <div class="stat-label">Investor Likes</div>
         </div>
         
         <div class="stat-card">
-            <div class="stat-number" data-target="8">0</div>
+            <div class="stat-number"><?php echo $stats['expressions_of_interest'] ?? 0; ?></div>
             <div class="stat-label">Expressions of Interest</div>
         </div>
     </div>
@@ -62,45 +185,33 @@ if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'entrepreneur')
                         </tr>
                     </thead>
                     <tbody>
+                        <?php while ($pitch = $pitchesResult->fetch_assoc()): ?>
                         <tr>
-                            <td>AI-Powered Customer Support</td>
-                            <td>SaaS</td>
-                            <td>$500,000</td>
-                            <td><span style="color: #10b981;">Active</span></td>
-                            <td>156</td>
-                            <td>23</td>
+                            <td><?php echo htmlspecialchars($pitch['startup_name']); ?></td>
+                            <td><?php echo htmlspecialchars($pitch['category']); ?></td>
+                            <td>$<?php echo number_format($pitch['funding_goal']); ?></td>
                             <td>
-                                <button class="btn btn-info btn-sm">View</button>
-                                <button class="btn btn-warning btn-sm">Edit</button>
-                                <button class="btn btn-danger btn-sm">Delete</button>
+                                <?php if ($pitch['status'] === 'active'): ?>
+                                    <span style="color: #10b981;">Active</span>
+                                <?php elseif ($pitch['status'] === 'pending'): ?>
+                                    <span style="color: #f59e0b;">Pending Approval</span>
+                                <?php elseif ($pitch['status'] === 'draft'): ?>
+                                    <span style="color: #f59e0b;">Draft</span>
+                                <?php elseif ($pitch['status'] === 'rejected'): ?>
+                                    <span style="color: #dc2626;">Rejected</span>
+                                <?php else: ?>
+                                    <span style="color: #6b7280;"><?php echo ucfirst($pitch['status']); ?></span>
+                                <?php endif; ?>
                             </td>
-                        </tr>
-                        <tr>
-                            <td>Eco-Friendly Packaging</td>
-                            <td>Sustainability</td>
-                            <td>$250,000</td>
-                            <td><span style="color: #10b981;">Active</span></td>
-                            <td>89</td>
-                            <td>12</td>
-                            <td>
-                                <button class="btn btn-info btn-sm">View</button>
-                                <button class="btn btn-warning btn-sm">Edit</button>
-                                <button class="btn btn-danger btn-sm">Delete</button>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>Health Monitoring Wearable</td>
-                            <td>Healthcare</td>
-                            <td>$750,000</td>
-                            <td><span style="color: #f59e0b;">Draft</span></td>
                             <td>0</td>
                             <td>0</td>
                             <td>
-                                <button class="btn btn-info btn-sm">View</button>
-                                <button class="btn btn-warning btn-sm">Edit</button>
-                                <button class="btn btn-primary btn-sm">Publish</button>
+                                <button class="btn btn-info btn-sm" onclick="viewPitch(<?php echo $pitch['id']; ?>)">View</button>
+                                <button class="btn btn-warning btn-sm" onclick='openEditPitchModal(<?php echo json_encode($pitch); ?>)'>Edit</button>
+                                <button class="btn btn-danger btn-sm" onclick="deletePitch(<?php echo $pitch['id']; ?>)">Delete</button>
                             </td>
                         </tr>
+                        <?php endwhile; ?>
                     </tbody>
                 </table>
             </div>
@@ -110,7 +221,7 @@ if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'entrepreneur')
         <div class="content-section">
             <div class="section-header">
                 <h3>Investor Interest</h3>
-                <span class="badge">8 expressions of interest</span>
+                <span class="badge"><?php echo $stats['expressions_of_interest'] ?? 0; ?> expressions of interest</span>
             </div>
             
             <div class="table-responsive">
@@ -125,36 +236,28 @@ if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'entrepreneur')
                         </tr>
                     </thead>
                     <tbody>
+                        <?php while ($interest = $interestResult->fetch_assoc()): ?>
                         <tr>
-                            <td>John Venture Capital</td>
-                            <td>AI-Powered Customer Support</td>
-                            <td>2024-01-15</td>
-                            <td><span style="color: #10b981;">New</span></td>
+                            <td><?php echo htmlspecialchars($interest['investor_name']); ?></td>
+                            <td><?php echo htmlspecialchars($interest['pitch_title']); ?></td>
+                            <td><?php echo htmlspecialchars($interest['interest_date']); ?></td>
+                            <td>
+                                <?php if ($interest['status'] === 'new'): ?>
+                                    <span style="color: #10b981;">New</span>
+                                <?php elseif ($interest['status'] === 'contacted'): ?>
+                                    <span style="color: #3b82f6;">Contacted</span>
+                                <?php elseif ($interest['status'] === 'scheduled'): ?>
+                                    <span style="color: #f59e0b;">Scheduled Meeting</span>
+                                <?php else: ?>
+                                    <span><?php echo ucfirst($interest['status']); ?></span>
+                                <?php endif; ?>
+                            </td>
                             <td>
                                 <button class="btn btn-primary btn-sm">Contact</button>
                                 <button class="btn btn-info btn-sm">View Profile</button>
                             </td>
                         </tr>
-                        <tr>
-                            <td>Tech Growth Partners</td>
-                            <td>Eco-Friendly Packaging</td>
-                            <td>2024-01-12</td>
-                            <td><span style="color: #3b82f6;">Contacted</span></td>
-                            <td>
-                                <button class="btn btn-primary btn-sm">Follow Up</button>
-                                <button class="btn btn-info btn-sm">View Profile</button>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>Green Energy Fund</td>
-                            <td>Eco-Friendly Packaging</td>
-                            <td>2024-01-10</td>
-                            <td><span style="color: #f59e0b;">Scheduled Meeting</span></td>
-                            <td>
-                                <button class="btn btn-primary btn-sm">Meeting Details</button>
-                                <button class="btn btn-info btn-sm">View Profile</button>
-                            </td>
-                        </tr>
+                        <?php endwhile; ?>
                     </tbody>
                 </table>
             </div>
@@ -174,7 +277,7 @@ if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'entrepreneur')
             <div class="analytics-grid">
                 <div class="analytics-card">
                     <h4>Total Views</h4>
-                    <div class="stat-number">245</div>
+                    <div class="stat-number"><?php echo $stats['total_views'] ?? 0; ?></div>
                     <div class="progress-bar">
                         <div class="progress-fill" style="width: 75%; background: #3b82f6;"></div>
                     </div>
@@ -208,45 +311,32 @@ if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'entrepreneur')
             </div>
             
             <div class="activity-feed">
+                <?php while ($activity = $activityResult->fetch_assoc()): ?>
                 <div class="activity-item">
-                    <div class="activity-icon" style="background: #10b981;">
-                        <i class="fas fa-eye"></i>
+                    <div class="activity-icon" style="background: <?php 
+                        echo $activity['type'] === 'view' ? '#10b981' : 
+                             ($activity['type'] === 'like' ? '#3b82f6' : 
+                             ($activity['type'] === 'message' ? '#f59e0b' : '#6b7280')); 
+                    ?>;">
+                        <i class="fas fa-<?php 
+                            echo $activity['type'] === 'view' ? 'eye' : 
+                                 ($activity['type'] === 'like' ? 'heart' : 
+                                 ($activity['type'] === 'message' ? 'comment' : 'bell')); 
+                        ?>"></i>
                     </div>
                     <div class="activity-content">
-                        <p><strong>25 investors</strong> viewed your AI-Powered Customer Support pitch</p>
-                        <small>Today</small>
+                        <p>
+                            <?php echo $activity['count']; ?> 
+                            <?php 
+                                echo $activity['type'] === 'view' ? 'investors viewed your pitches' : 
+                                     ($activity['type'] === 'like' ? 'likes received' : 
+                                     ($activity['type'] === 'message' ? 'new messages' : 'notifications')); 
+                            ?>
+                        </p>
+                        <small><?php echo date('M j, Y', strtotime($activity['last_date'])); ?></small>
                     </div>
                 </div>
-                
-                <div class="activity-item">
-                    <div class="activity-icon" style="background: #3b82f6;">
-                        <i class="fas fa-heart"></i>
-                    </div>
-                    <div class="activity-content">
-                        <p><strong>Tech Growth Partners</strong> liked your Eco-Friendly Packaging pitch</p>
-                        <small>Yesterday</small>
-                    </div>
-                </div>
-                
-                <div class="activity-item">
-                    <div class="activity-icon" style="background: #f59e0b;">
-                        <i class="fas fa-comment"></i>
-                    </div>
-                    <div class="activity-content">
-                        <p>New message from <strong>Green Energy Fund</strong></p>
-                        <small>2 days ago</small>
-                    </div>
-                </div>
-                
-                <div class="activity-item">
-                    <div class="activity-icon" style="background: #ef4444;">
-                        <i class="fas fa-bell"></i>
-                    </div>
-                    <div class="activity-content">
-                        <p>Pitch <strong>Health Monitoring Wearable</strong> needs completion</p>
-                        <small>3 days ago</small>
-                    </div>
-                </div>
+                <?php endwhile; ?>
             </div>
         </div>
     </div>
@@ -257,15 +347,16 @@ if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'entrepreneur')
     <div class="modal-content">
         <span class="close" onclick="closeModal('createPitchModal')">&times;</span>
         <h2>Create New Pitch</h2>
-        <form>
+        <form method="POST" action="">
+            <input type="hidden" name="create_pitch" value="1">
             <div class="form-group">
                 <label>Pitch Title *</label>
-                <input type="text" class="form-control" placeholder="Enter your pitch title" required>
+                <input type="text" name="startup_name" class="form-control" placeholder="Enter your pitch title" required>
             </div>
-            
+
             <div class="form-group">
                 <label>Category *</label>
-                <select class="form-control" required>
+                <select name="category" class="form-control" required>
                     <option value="">Select category</option>
                     <option>SaaS</option>
                     <option>Healthcare</option>
@@ -276,31 +367,82 @@ if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'entrepreneur')
                     <option>Manufacturing</option>
                 </select>
             </div>
-            
+
             <div class="form-group">
                 <label>Funding Goal ($) *</label>
-                <input type="number" class="form-control" placeholder="Enter funding amount" required>
+                <input type="number" name="funding_goal" class="form-control" placeholder="Enter funding amount" required>
             </div>
-            
+
             <div class="form-group">
                 <label>Short Description *</label>
-                <textarea class="form-control" rows="3" placeholder="Brief description of your startup" required></textarea>
+                <textarea name="short_description" class="form-control" rows="3" placeholder="Brief description of your startup" required></textarea>
             </div>
-            
+
             <div class="form-group">
                 <label>Detailed Pitch</label>
-                <textarea class="form-control" rows="6" placeholder="Detailed business plan, market analysis, team information..."></textarea>
+                <textarea name="detailed_pitch" class="form-control" rows="6" placeholder="Detailed business plan, market analysis, team information..."></textarea>
             </div>
-            
+
             <div class="form-group">
                 <label>Upload Images (Max 5)</label>
                 <input type="file" class="form-control" multiple accept="image/*">
             </div>
-            
+
             <div class="form-actions">
                 <button type="button" class="btn btn-secondary" onclick="closeModal('createPitchModal')">Cancel</button>
                 <button type="submit" class="btn btn-primary">Save as Draft</button>
-                <button type="submit" class="btn btn-success">Publish Now</button>
+                <button type="submit" name="publish_now" value="on" class="btn btn-success">Publish Now</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit Pitch Modal -->
+<div id="editPitchModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal('editPitchModal')">&times;</span>
+        <h2>Edit Pitch</h2>
+        <form method="POST" action="">
+            <input type="hidden" name="edit_pitch" value="1">
+            <input type="hidden" name="pitch_id" id="edit_pitch_id">
+            <div class="form-group">
+                <label>Pitch Title *</label>
+                <input type="text" name="startup_name" id="edit_startup_name" class="form-control" placeholder="Enter your pitch title" required>
+            </div>
+
+            <div class="form-group">
+                <label>Category *</label>
+                <select name="category" id="edit_category" class="form-control" required>
+                    <option value="">Select category</option>
+                    <option>SaaS</option>
+                    <option>Healthcare</option>
+                    <option>FinTech</option>
+                    <option>E-commerce</option>
+                    <option>Sustainability</option>
+                    <option>Education</option>
+                    <option>Manufacturing</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Funding Goal ($) *</label>
+                <input type="number" name="funding_goal" id="edit_funding_goal" class="form-control" placeholder="Enter funding amount" required>
+            </div>
+
+            <div class="form-group">
+                <label>Short Description *</label>
+                <textarea name="short_description" id="edit_short_description" class="form-control" rows="3" placeholder="Brief description of your startup" required></textarea>
+            </div>
+
+            <div class="form-group">
+                <label>Detailed Pitch</label>
+                <textarea name="detailed_pitch" id="edit_detailed_pitch" class="form-control" rows="6" placeholder="Detailed business plan, market analysis, team information..."></textarea>
+            </div>
+
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('editPitchModal')">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save as Draft</button>
+                <button type="submit" name="publish_now" value="on" class="btn btn-success">Publish Now</button>
             </div>
         </form>
     </div>
@@ -423,5 +565,43 @@ if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'entrepreneur')
     cursor: pointer;
 }
 </style>
+
+<script>
+function openModal(modalId) {
+    document.getElementById(modalId).style.display = 'flex';
+}
+
+function closeModal(modalId) {
+    document.getElementById(modalId).style.display = 'none';
+}
+
+function openEditPitchModal(pitchData) {
+    document.getElementById('edit_pitch_id').value = pitchData.id;
+    document.getElementById('edit_startup_name').value = pitchData.startup_name;
+    document.getElementById('edit_category').value = pitchData.category;
+    document.getElementById('edit_funding_goal').value = pitchData.funding_goal;
+    document.getElementById('edit_short_description').value = pitchData.description;
+    document.getElementById('edit_detailed_pitch').value = pitchData.detailed_pitch || '';
+    openModal('editPitchModal');
+}
+
+function viewPitch(pitchId) {
+    // Redirect to pitch view page
+    window.location.href = 'view-pitch.php?id=' + pitchId;
+}
+
+function deletePitch(pitchId) {
+    if (confirm('Are you sure you want to delete this pitch?')) {
+        window.location.href = 'dashboard-entrepreneur.php?action=delete&pitch_id=' + pitchId;
+    }
+}
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+    if (event.target.classList.contains('modal')) {
+        event.target.style.display = 'none';
+    }
+}
+</script>
 
 <?php include 'includes/footer.php'; ?>

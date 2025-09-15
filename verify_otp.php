@@ -35,7 +35,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
                 echo "<script>alert('Registration successful! You can now log in.'); window.location='login.php';</script>";
             } else {
-                echo "<script>alert('Error inserting into database.'); window.location='register.php';</script>";
+                $error = $insert->error;
+                echo "<script>alert('Error inserting into database: " . addslashes($error) . "'); window.location='register.php';</script>";
             }
         } else {
             echo "<script>alert('Invalid OTP. Please try again.'); window.location='verify_otp.php';</script>";

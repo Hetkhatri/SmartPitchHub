@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Startup Pitch Hub - Connect Ideas with Funding</title>
-    <link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="/SmartPitchHub-1/css/style.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
@@ -29,12 +29,15 @@
                             <a href="dashboard-investor.php" class="nav-link btn-primary">Investor Dashboard</a>
                         <?php elseif ($_SESSION['user_role'] === 'entrepreneur'): ?>
                             <a href="dashboard-entrepreneur.php" class="nav-link btn-primary">Entrepreneur Dashboard</a>
+                        <?php elseif ($_SESSION['user_role'] === 'admin'): ?>
+                            <a href="admin/dashboard.php" class="nav-link btn-primary">Admin Dashboard</a>
                         <?php endif; ?>
                         <a href="logout.php" class="nav-link btn-secondary">Logout</a>
                     <?php else: ?>
                         <div class="auth-buttons">
                             <a href="login.php?role=investor" class="nav-link btn-primary">Investor Login</a>
                             <a href="login.php?role=entrepreneur" class="nav-link btn-secondary">Entrepreneur Login</a>
+                            <a href="admin/login.php" class="nav-link btn-danger">Admin Login</a>
                         </div>
                     <?php endif; ?>
                 </div>

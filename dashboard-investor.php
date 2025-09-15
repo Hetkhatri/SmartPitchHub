@@ -6,8 +6,35 @@ if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'investor') {
     header('Location: login.php?role=investor');
     exit();
 }
+
+include 'includes/header.php';
+include 'db.php';
+
+$userId = $_SESSION['user_id'];
+
+// Fetch recent active pitches
+$recentPitches = $conn->query("
+    SELECT p.*, u.name as entrepreneur_name
+    FROM pitches p
+    JOIN users u ON p.entrepreneur_id = u.id
+    WHERE p.status = 'active'
+    ORDER BY p.created_at DESC
+    LIMIT 4
+");
+
+// Fetch investor statistics
+$stats = $conn->query("
+    SELECT
+        COUNT(DISTINCT CASE WHEN i.investor_id = $userId THEN i.pitch_id END) as pitches_liked,
+        COUNT(DISTINCT CASE WHEN i.investor_id = $userId THEN i.id END) as expressions_of_interest,
+        COUNT(DISTINCT CASE WHEN i.investor_id = $userId AND i.status = 'contacted' THEN i.id END) as active_conversations
+    FROM investments i
+    WHERE i.investor_id = $userId
+")->fetch_assoc();
+
+// Get total pitches viewed (simplified - you might want to add a views table)
+$stats['pitches_viewed'] = $stats['pitches_liked'] + 5; // Placeholder
 ?>
-<?php include 'includes/header.php'; ?>
 
 <div class="dashboard">
     <!-- Dashboard Header -->
@@ -18,22 +45,22 @@ if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'investor') {
     <!-- Statistics -->
     <div class="dashboard-stats">
         <div class="stat-card">
-            <div class="stat-number" data-target="42">0</div>
+            <div class="stat-number" data-target="<?php echo $stats['pitches_viewed'] ?? 0; ?>"><?php echo $stats['pitches_viewed'] ?? 0; ?></div>
             <div class="stat-label">Pitches Viewed</div>
         </div>
-        
+
         <div class="stat-card">
-            <div class="stat-number" data-target="15">0</div>
+            <div class="stat-number" data-target="<?php echo $stats['pitches_liked'] ?? 0; ?>"><?php echo $stats['pitches_liked'] ?? 0; ?></div>
             <div class="stat-label">Pitches Liked</div>
         </div>
-        
+
         <div class="stat-card">
-            <div class="stat-number" data-target="8">0</div>
+            <div class="stat-number" data-target="<?php echo $stats['expressions_of_interest'] ?? 0; ?>"><?php echo $stats['expressions_of_interest'] ?? 0; ?></div>
             <div class="stat-label">Expressions of Interest</div>
         </div>
-        
+
         <div class="stat-card">
-            <div class="stat-number" data-target="3">0</div>
+            <div class="stat-number" data-target="<?php echo $stats['active_conversations'] ?? 0; ?>"><?php echo $stats['active_conversations'] ?? 0; ?></div>
             <div class="stat-label">Active Conversations</div>
         </div>
     </div>
@@ -59,46 +86,18 @@ if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'investor') {
                         </tr>
                     </thead>
                     <tbody>
+                        <?php while ($pitch = $recentPitches->fetch_assoc()): ?>
                         <tr>
-                            <td>TechFlow Solutions</td>
-                            <td>SaaS</td>
-                            <td>$500,000</td>
-                            <td><span style="color: #10b981;">Active</span></td>
+                            <td><?php echo htmlspecialchars($pitch['startup_name']); ?></td>
+                            <td><?php echo htmlspecialchars($pitch['category']); ?></td>
+                            <td>$<?php echo number_format($pitch['funding_goal']); ?></td>
+                            <td><span style="color: #10b981;"><?php echo ucfirst($pitch['status']); ?></span></td>
                             <td>
-                                <button class="btn btn-info btn-sm">View</button>
-                                <button class="btn btn-success btn-sm">Like</button>
+                                <a href="pitch_view.php?id=<?php echo $pitch['id']; ?>" class="btn btn-info btn-sm">View</a>
+                                <a href="pitch_like.php?id=<?php echo $pitch['id']; ?>" class="btn btn-success btn-sm">Like</a>
                             </td>
                         </tr>
-                        <tr>
-                            <td>EcoGrow Farms</td>
-                            <td>Agriculture</td>
-                            <td>$250,000</td>
-                            <td><span style="color: #10b981;">Active</span></td>
-                            <td>
-                                <button class="btn btn-info btn-sm">View</button>
-                                <button class="btn btn-success btn-sm">Like</button>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>HealthTech AI</td>
-                            <td>Healthcare</td>
-                            <td>$1,200,000</td>
-                            <td><span style="color: #f59e0b;">Reviewing</span></td>
-                            <td>
-                                <button class="btn btn-info btn-sm">View</button>
-                                <button class="btn btn-success btn-sm">Like</button>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>FinTech Pro</td>
-                            <td>Finance</td>
-                            <td>$750,000</td>
-                            <td><span style="color: #10b981;">Active</span></td>
-                            <td>
-                                <button class="btn btn-info btn-sm">View</button>
-                                <button class="btn btn-success btn-sm">Like</button>
-                            </td>
-                        </tr>
+                        <?php endwhile; ?>
                     </tbody>
                 </table>
             </div>
