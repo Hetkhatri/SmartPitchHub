@@ -22,6 +22,7 @@
                     <a href="index.php" class="nav-link">Dashboard</a>
                     <a href="users.php" class="nav-link">Users</a>
                     <a href="pitches.php" class="nav-link">Pitches</a>
+                    <a href="pending_pitches.php" class="nav-link">Pending Approvals</a>
                     <a href="../index.php" class="nav-link">Main Site</a>
                     <a href="logout.php" class="nav-link btn-secondary">Logout</a>
                 </div>

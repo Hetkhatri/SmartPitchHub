@@ -153,6 +153,7 @@ if ($pitches_exists->num_rows > 0) {
                                 SELECT p.startup_name, e.name as entrepreneur, p.funding_goal, p.status, p.created_at 
                                 FROM pitches p 
                                 JOIN entrepreneurs e ON p.entrepreneur_id = e.id 
+                                WHERE p.status = 'active'
                                 ORDER BY p.created_at DESC 
                                 LIMIT 5
                             ");

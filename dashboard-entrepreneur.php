@@ -1,4 +1,4 @@
-ppr<?php
+<?php
 // Start session and check if user is logged in as entrepreneur
 session_start();
 if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'entrepreneur') {
@@ -17,14 +17,12 @@ $pitchesQuery = $conn->prepare("SELECT * FROM pitches WHERE entrepreneur_id = ? 
 $pitchesQuery->bind_param("i", $userId);
 $pitchesQuery->execute();
 $pitchesResult = $pitchesQuery->get_result();
-
-// Calculate statistics
 $statsQuery = $conn->prepare("
-    SELECT 
+    SELECT
         COUNT(*) as total_pitches,
         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_pitches,
-        0 as total_views,
-        0 as investor_likes,
+        IFNULL(SUM(views), 0) as total_views,
+        IFNULL(SUM(likes), 0) as investor_likes,
         (SELECT COUNT(*) FROM investments i JOIN pitches p ON i.pitch_id = p.id WHERE p.entrepreneur_id = ?) as expressions_of_interest
     FROM pitches
     WHERE entrepreneur_id = ? AND status != 'deleted'
@@ -53,16 +51,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_pitch'])) {
     $funding_goal = $_POST['funding_goal'];
     $short_description = $_POST['short_description'];
     $detailed_pitch = $_POST['detailed_pitch'];
-    // When publish_now is clicked, insert into pending_pitches for admin approval
+    // When publish_now is clicked, set status to 'pending' else 'draft'
     $status = isset($_POST['publish_now']) && $_POST['publish_now'] === 'on' ? 'pending' : 'draft';
 
-    if ($status === 'pending') {
-        $stmt = $conn->prepare("INSERT INTO pending_pitches (startup_name, description, category, funding_goal, entrepreneur_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())");
-        $stmt->bind_param("sssdis", $startup_name, $short_description, $category, $funding_goal, $userId, $status);
-    } else {
-        $stmt = $conn->prepare("INSERT INTO pitches (startup_name, description, category, funding_goal, entrepreneur_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())");
-        $stmt->bind_param("sssdis", $startup_name, $short_description, $category, $funding_goal, $userId, $status);
-    }
+    // Use only pitches table for all pitch operations
+    $stmt = $conn->prepare("INSERT INTO pitches (startup_name, description, category, funding_goal, entrepreneur_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())");
+    $stmt->bind_param("sssdis", $startup_name, $short_description, $category, $funding_goal, $userId, $status);
 
     if ($stmt->execute()) {
         $message = "Pitch created successfully";
@@ -142,22 +136,22 @@ $activityResult = $activityQuery->get_result();
     <!-- Statistics -->
     <div class="dashboard-stats">
         <div class="stat-card">
-            <div class="stat-number"><?php echo $stats['active_pitches'] ?? 0; ?></div>
+            <div class="stat-number" data-target="<?php echo $stats['active_pitches'] ?? 0; ?>"><?php echo $stats['active_pitches'] ?? 0; ?></div>
             <div class="stat-label">Active Pitches</div>
         </div>
         
         <div class="stat-card">
-            <div class="stat-number"><?php echo $stats['total_views'] ?? 0; ?></div>
+            <div class="stat-number" data-target="<?php echo $stats['total_views'] ?? 0; ?>"><?php echo $stats['total_views'] ?? 0; ?></div>
             <div class="stat-label">Total Views</div>
         </div>
         
         <div class="stat-card">
-            <div class="stat-number"><?php echo $stats['investor_likes'] ?? 0; ?></div>
+            <div class="stat-number" data-target="<?php echo $stats['investor_likes'] ?? 0; ?>"><?php echo $stats['investor_likes'] ?? 0; ?></div>
             <div class="stat-label">Investor Likes</div>
         </div>
         
         <div class="stat-card">
-            <div class="stat-number"><?php echo $stats['expressions_of_interest'] ?? 0; ?></div>
+            <div class="stat-number" data-target="<?php echo $stats['expressions_of_interest'] ?? 0; ?>"><?php echo $stats['expressions_of_interest'] ?? 0; ?></div>
             <div class="stat-label">Expressions of Interest</div>
         </div>
     </div>
@@ -189,7 +183,7 @@ $activityResult = $activityQuery->get_result();
                         <tr>
                             <td><?php echo htmlspecialchars($pitch['startup_name']); ?></td>
                             <td><?php echo htmlspecialchars($pitch['category']); ?></td>
-                            <td>$<?php echo number_format($pitch['funding_goal']); ?></td>
+                            <td>₹<?php echo number_format($pitch['funding_goal']); ?></td>
                             <td>
                                 <?php if ($pitch['status'] === 'active'): ?>
                                     <span style="color: #10b981;">Active</span>
@@ -203,8 +197,8 @@ $activityResult = $activityQuery->get_result();
                                     <span style="color: #6b7280;"><?php echo ucfirst($pitch['status']); ?></span>
                                 <?php endif; ?>
                             </td>
-                            <td>0</td>
-                            <td>0</td>
+                            <td><?php echo $pitch['views'] ?? 0; ?></td>
+                            <td><?php echo $pitch['likes'] ?? 0; ?></td>
                             <td>
                                 <button class="btn btn-info btn-sm" onclick="viewPitch(<?php echo $pitch['id']; ?>)">View</button>
                                 <button class="btn btn-warning btn-sm" onclick='openEditPitchModal(<?php echo json_encode($pitch); ?>)'>Edit</button>
@@ -587,7 +581,7 @@ function openEditPitchModal(pitchData) {
 
 function viewPitch(pitchId) {
     // Redirect to pitch view page
-    window.location.href = 'view-pitch.php?id=' + pitchId;
+    window.location.href = 'pitch_view.php?id=' + pitchId;
 }
 
 function deletePitch(pitchId) {

@@ -1,4 +1,4 @@
--- Repair all tables in smartpitchhub database
+-- Repair all tables
 REPAIR TABLE admins;
 REPAIR TABLE entrepreneurs;
 REPAIR TABLE investments;

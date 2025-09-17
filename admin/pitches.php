@@ -19,10 +19,15 @@ if (isset($_GET['action'])) {
         $stmt->execute();
         $message = "Pitch deleted successfully";
     } elseif ($action === 'reject' && $pitchId) {
-        $stmt = $conn->prepare("UPDATE pitches SET status = 'rejected' WHERE id = ?");
+        $stmt = $conn->prepare("UPDATE pitches SET status = 'inactive' WHERE id = ?");
         $stmt->bind_param("i", $pitchId);
         $stmt->execute();
         $message = "Pitch rejected successfully";
+    } elseif ($action === 'approve' && $pitchId) {
+        $stmt = $conn->prepare("UPDATE pitches SET status = 'active' WHERE id = ?");
+        $stmt->bind_param("i", $pitchId);
+        $stmt->execute();
+        $message = "Pitch approved successfully";
     }
 }
 
@@ -34,8 +39,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_pitch'])) {
     $funding_goal = $_POST['funding_goal'];
     $entrepreneur_id = $_POST['entrepreneur_id'];
 
-    $stmt = $conn->prepare("INSERT INTO pitches (startup_name, description, category, funding_goal, entrepreneur_id, status) VALUES (?, ?, ?, ?, ?, 'pending')");
-    $stmt->bind_param("sssdi", $startup_name, $description, $category, $funding_goal, $entrepreneur_id);
+    // Set default status to 'pending' if not provided
+    $status = 'draft';
+
+    $stmt = $conn->prepare("INSERT INTO pitches (startup_name, description, category, funding_goal, entrepreneur_id, status) VALUES (?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("sssdiss", $startup_name, $description, $category, $funding_goal, $entrepreneur_id, $status);
+
 
     if ($stmt->execute()) {
         $message = "Pitch added successfully";
@@ -47,14 +56,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_pitch'])) {
 // Get entrepreneurs for dropdown
 $entrepreneurs = $conn->query("SELECT id, name FROM entrepreneurs");
 
-// Get all pitches with entrepreneur information
 $pitches = $conn->query("
     SELECT p.*, e.name as entrepreneur_name, e.email as entrepreneur_email,
            COUNT(i.id) as investment_count,
-           0 as total_investment
+           IFNULL(SUM(i.status = 'completed'), 0) as total_investment
     FROM pitches p
     JOIN entrepreneurs e ON p.entrepreneur_id = e.id
     LEFT JOIN investments i ON p.id = i.pitch_id
+    WHERE p.status = 'active'
     GROUP BY p.id
     ORDER BY p.created_at DESC
 ");
@@ -198,12 +207,12 @@ $pitches = $conn->query("
                                 <div class="action-buttons">
                                     <a href="pitch_view.php?id=<?php echo $pitch['id']; ?>" class="btn btn-info btn-sm">View</a>
                                     <a href="pitch_edit.php?id=<?php echo $pitch['id']; ?>" class="btn btn-warning btn-sm">Edit</a>
-                                    <?php if ($pitch['status'] === 'pending'): ?>
+                                    <?php if ($pitch['status'] === 'draft'): ?>
                                         <a href="pitches.php?action=approve&id=<?php echo $pitch['id']; ?>" class="btn btn-success btn-sm">Approve</a>
                                         <a href="pitches.php?action=reject&id=<?php echo $pitch['id']; ?>" class="btn btn-danger btn-sm">Reject</a>
                                     <?php elseif ($pitch['status'] === 'active'): ?>
                                         <a href="pitches.php?action=reject&id=<?php echo $pitch['id']; ?>" class="btn btn-danger btn-sm">Reject</a>
-                                    <?php elseif ($pitch['status'] === 'rejected'): ?>
+                                    <?php elseif ($pitch['status'] === 'inactive'): ?>
                                         <a href="pitches.php?action=approve&id=<?php echo $pitch['id']; ?>" class="btn btn-success btn-sm">Approve</a>
                                     <?php endif; ?>
                                     <a href="pitches.php?action=delete&id=<?php echo $pitch['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Are you sure you want to delete this pitch?')">Delete</a>
