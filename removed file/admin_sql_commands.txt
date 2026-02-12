@@ -1,0 +1,32 @@
+=== Smart Pitch Hub - Admin SQL Commands ===
+Copy and paste these commands into phpMyAdmin SQL tab:
+
+1. Create admins table:
+CREATE TABLE admins (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    status VARCHAR(20) DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+2. Create default admin user (password: admin123):
+INSERT INTO admins (name, email, password) VALUES 
+('Admin User', 'admin@smartpitchhub.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi');
+
+3. Verify the setup:
+SELECT * FROM admins;
+
+=== Instructions ===
+1. Open phpMyAdmin in your browser
+2. Select your database (smartpitchhub)
+3. Click on the "SQL" tab
+4. Copy and paste the CREATE TABLE command, then click "Go"
+5. Copy and paste the INSERT command, then click "Go"
+6. Run the SELECT command to verify
+
+=== Default Login Credentials ===
+Email: admin@smartpitchhub.com
+Password: admin123
