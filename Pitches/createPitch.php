@@ -356,6 +356,26 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
     .modal-result .range { font-size: 1.5rem; font-weight: 700; font-family: 'Space Grotesk', sans-serif; }
     .modal-cta { width: 100%; padding: 0.75rem; font-size: 0.875rem; }
 
+    .loading { 
+      pointer-events: none; 
+      opacity: 0.7; 
+      position: relative;
+      color: transparent !important;
+    }
+    .loading::after {
+      content: "";
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      top: 50%;
+      left: 50%;
+      margin: -8px 0 0 -8px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 50%;
+      border-top-color: #fff;
+      animation: spin 0.6s linear infinite;
+    }
+
     /* SVG icon inline helper */
     .icon { display: inline-block; vertical-align: middle; }
   </style>
@@ -480,18 +500,39 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
             </div>
           </div>
 
-          <div class="grid-2" style="margin-bottom:1.25rem">
+          <div style="margin-bottom:1.5rem">
             <div>
-              <div class="field-header">
+              <div class="field-header" style="display: flex; justify-content: space-between; align-items: center;">
                 <label class="neon-label">Valuation (₹)</label>
-              </div>
-              <div style="position: relative; display: flex; align-items: center;">
-                <input class="neon-input" id="valuation" placeholder="e.g. 6,00,00,000" style="padding-right: 45px;" />
-                <button id="lock-valuation-btn" type="button" style="position: absolute; right: 10px; background: none; border: none; cursor: pointer; color: var(--primary); display: flex; align-items: center; justify-content: center; transition: all 0.3s;" title="Confirm Valuation">
-                  <svg id="tick-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                  <svg id="lock-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                <button type="button" class="neon-btn-ai" onclick="window.reviewValuation()" style="padding: 4px 12px; font-size: 0.75rem; height: auto; border-radius: 20px;">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
+                  Verify with AI
                 </button>
               </div>
+              <div style="position: relative; display: flex; align-items: center;">
+                <input class="neon-input" id="valuation" placeholder="e.g. 6,00,00,000" style="padding-right: 45px; width: 100%; border-color: rgba(var(--primary-rgb), 0.3);" />
+                <button id="lock-valuation-btn" type="button" style="position: absolute; right: 10px; background: none; border: none; cursor: pointer; color: var(--primary); display: flex; align-items: center; justify-content: center; transition: all 0.3s;" title="Confirm Valuation">
+                  <svg id="tick-icon" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  <svg id="lock-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                </button>
+              </div>
+
+              <!-- AI Feedback Area -->
+              <div id="ai-valuation-feedback" class="glass-card" style="display: none; margin-top: 1rem; border-color: var(--secondary); background: rgba(168, 85, 247, 0.05); padding: 1rem;">
+                <div style="display: flex; align-items: flex-start; gap: 1rem;">
+                  <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--secondary); display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 0 15px rgba(168, 85, 247, 0.4);">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>
+                  </div>
+                  <div style="flex-grow: 1;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
+                      <h4 style="font-size: 0.9rem; font-weight: 600; color: var(--fg);">AI Advisor Verdict</h4>
+                      <span id="ai-val-score" style="font-size: 0.8rem; font-weight: 700; color: var(--primary);">0% Confidence</span>
+                    </div>
+                    <p id="ai-val-message" style="font-size: 0.85rem; color: var(--muted); margin: 0;"></p>
+                  </div>
+                </div>
+              </div>
+
               <div id="valuation-action-area" style="margin-top: 10px; display: none;">
                 <button type="button" class="neon-btn-ai" onclick="window.open('valuationVerify.php', 'ValuationBuilder', 'width=1250,height=900,menubar=no,toolbar=no,location=no,status=no,scrollbars=yes,resizable=yes')" style="width: 100%; justify-content: center; border-color: var(--secondary); background: rgba(168, 85, 247, 0.1);">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>
@@ -729,6 +770,64 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
       if (el) el.addEventListener('input', () => { updateSummary(); checkValidity(); });
       if (el) el.addEventListener('change', () => { updateSummary(); checkValidity(); });
     });
+
+    // ===== AI VALUATION ADVISOR =====
+    window.reviewValuation = async function() {
+      const btn = event.currentTarget;
+      const valInput = document.getElementById('valuation');
+      const stageInput = document.getElementById('stage');
+      const industryInput = document.getElementById('industry');
+      const feedbackArea = document.getElementById('ai-valuation-feedback');
+      const valMessage = document.getElementById('ai-val-message');
+      const valScore = document.getElementById('ai-val-score');
+
+      const rawVal = valInput.value.replace(/[^\d.]/g, '');
+      if (!rawVal || parseFloat(rawVal) <= 0) {
+        alert("Please enter a valuation first.");
+        return;
+      }
+
+      btn.classList.add('loading');
+      
+      try {
+        const response = await fetch('api_valuation_advice.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            industry: industryInput.value || "Technology",
+            stage: stageInput.value || "Seed",
+            valuationAsk: parseFloat(rawVal),
+            ttmRevenue: 0,
+            growthRate: 20
+          })
+        });
+
+        const result = await response.json();
+
+        if (result.status === 'success' && result.data) {
+          const advice = result.data;
+          feedbackArea.style.display = 'block';
+          valScore.innerText = advice.score + "% Confidence";
+          valMessage.innerText = advice.message;
+
+          if (advice.message.toLowerCase().includes('fair') || advice.message.toLowerCase().includes('aligns')) {
+            valScore.style.color = 'var(--primary)';
+          } else if (advice.message.toLowerCase().includes('aggressive')) {
+            valScore.style.color = 'var(--secondary)';
+          } else {
+            valScore.style.color = 'var(--muted)';
+          }
+          feedbackArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } else {
+          alert(result.message || "AI Advisor is currently unavailable.");
+        }
+      } catch (err) {
+        console.error("Advisor Error:", err);
+        alert("Connection to AI Advisor failed.");
+      } finally {
+        btn.classList.remove('loading');
+      }
+    };
 
     const lockBtn = document.getElementById('lock-valuation-btn');
     const valInput = document.getElementById('valuation');
