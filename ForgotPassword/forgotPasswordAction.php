@@ -62,21 +62,17 @@ if (isset($_POST['submit_email'])) {
             try {
                 // Server settings
                 $mail->isSMTP();
-                $mail->Host       = 'smtp.gmail.com';                     
+                $config = require '../config.php';
+                $mail->isSMTP();                                            
+                $mail->Host       = $config['smtp_host'];                     
                 $mail->SMTPAuth   = true;                                   
-                
-                // ---------------------------------------------------
-                // PASTE YOUR WORKING CREDENTIALS HERE
-                // ---------------------------------------------------
-                 $mail->Username = 'smartpitchhub@gmail.com'; // your Gmail
-                 $mail->Password = 'rnon yugk xhtb vbxu';  
-                // ---------------------------------------------------
-
+                $mail->Username   = $config['smtp_user'];
+                $mail->Password   = $config['smtp_pass'];
                 $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;         
-                $mail->Port       = 587;                                    
+                $mail->Port       = $config['smtp_port'];                                    
 
-                // Recipients - CHANGE FROM ADDRESS TO YOUR GMAIL FOR TESTING
-                $mail->setFrom('smartpitchhub@gmail.com', 'SmartPitchHub'); 
+                // Recipients
+                $mail->setFrom($config['from_email'], $config['from_name']); 
                 $mail->addAddress($email);
 
                 // Content

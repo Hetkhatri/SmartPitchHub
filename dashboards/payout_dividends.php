@@ -35,43 +35,35 @@ try {
     
     $ent_wallet_id = $wallet['id'];
 
-    // 2. Fetch All Investors and Calculation Basis
-    // We base it on proportional investment in THIS entrepreneur's start-up(s).
-    // Note: A more complex system would do it per-share, but based on current schema:
-    // Total Raised for this entrepreneur? Or Total Shares Issued?
-    
-    // Let's get total shares issued by this entrepreneur (across all pitches or active ones?)
-    // Simpler approach: Get all 'completed' investments for this entrepreneur's pitches.
-    $sql_investors = "SELECT i.investor_id, i.amount, w.id as investor_wallet_id 
+    // 2. Fetch All REAL Shareholders and Proportionality
+    // Dividend is based on current share holdings, considering transfers.
+    $sql_investors = "SELECT i.investor_id, SUM(i.shares_bought) as current_shares, w.id as investor_wallet_id 
                       FROM investments i 
                       JOIN pitches p ON i.pitch_id = p.id 
                       JOIN wallets w ON (w.user_id = i.investor_id AND w.user_role = 'investor')
-                      WHERE p.entrepreneur_id = ? AND i.status = 'completed'";
+                      WHERE p.entrepreneur_id = ? AND i.status = 'completed'
+                      GROUP BY i.investor_id
+                      HAVING current_shares > 0";
                       
     $stmt_inv = $conn->prepare($sql_investors);
     $stmt_inv->bind_param("i", $entrepreneur_id);
     $stmt_inv->execute();
     $result_inv = $stmt_inv->get_result();
     
-    $investments = [];
-    $total_invested_capital = 0;
+    $shareholders = [];
+    $total_platform_shares = 0;
     
     while ($row = $result_inv->fetch_assoc()) {
-        $inv_id = $row['investor_id'];
-        $amount = $row['amount'];
-        
-        if (!isset($investments[$inv_id])) {
-            $investments[$inv_id] = [
-                'wallet_id' => $row['investor_wallet_id'],
-                'total_invested' => 0
-            ];
-        }
-        $investments[$inv_id]['total_invested'] += $amount;
-        $total_invested_capital += $amount;
+        $shareholders[] = [
+            'investor_id' => $row['investor_id'],
+            'wallet_id' => $row['investor_wallet_id'],
+            'shares' => intval($row['current_shares'])
+        ];
+        $total_platform_shares += intval($row['current_shares']);
     }
     
-    if ($total_invested_capital <= 0) {
-        throw new Exception("No active investors found to distribute dividends to.");
+    if ($total_platform_shares <= 0) {
+        throw new Exception("No active shareholders found to distribute dividends to.");
     }
 
     // 3. Process Transactions
@@ -82,27 +74,27 @@ try {
     $upd_ent->execute();
 
     // Log Debit
-    $txn_ref = "DIV-" . time() . "-" . uniqid();
+    $txn_ref = "DIV-" . time() . "-" . strtoupper(uniqid());
     $log_ent = $conn->prepare("INSERT INTO wallet_transactions (wallet_id, user_id, user_role, txn_type, amount, source, reference_id, status) VALUES (?, ?, 'entrepreneur', 'debit', ?, 'Dividend Payout', ?, 'success')");
     $log_ent->bind_param("iids", $ent_wallet_id, $entrepreneur_id, $payout_amount, $txn_ref);
     $log_ent->execute();
 
-    // Credit Investors
-    foreach ($investments as $inv_id => $data) {
-        // Calculate share of the dividend pool
-        $share_ratio = $data['total_invested'] / $total_invested_capital;
-        $dividend_share = floor($payout_amount * $share_ratio * 100) / 100; // Floor to 2 decimals to be safe
+    // Credit Shareholders proportionally
+    foreach ($shareholders as $sh) {
+        // Calculate ratio based on shares owned vs total shares sold by this founder
+        $share_ratio = $sh['shares'] / $total_platform_shares;
+        $dividend_share = floor($payout_amount * $share_ratio * 100) / 100;
         
         if ($dividend_share > 0) {
             // Update Investor Wallet
-            $upd_inv = $conn->prepare("UPDATE wallets SET balance = balance + ? WHERE id = ?");
-            $upd_inv->bind_param("di", $dividend_share, $data['wallet_id']);
-            $upd_inv->execute();
+            $upd_sh = $conn->prepare("UPDATE wallets SET balance = balance + ? WHERE id = ?");
+            $upd_sh->bind_param("di", $dividend_share, $sh['wallet_id']);
+            $upd_sh->execute();
             
             // Log Credit
-            $log_inv = $conn->prepare("INSERT INTO wallet_transactions (wallet_id, user_id, user_role, txn_type, amount, source, reference_id, status) VALUES (?, ?, 'investor', 'credit', ?, 'Dividend Received', ?, 'success')");
-            $log_inv->bind_param("iids", $data['wallet_id'], $inv_id, $dividend_share, $txn_ref);
-            $log_inv->execute();
+            $log_sh = $conn->prepare("INSERT INTO wallet_transactions (wallet_id, user_id, user_role, txn_type, amount, source, reference_id, status) VALUES (?, ?, 'investor', 'credit', ?, 'Dividend Received', ?, 'success')");
+            $log_sh->bind_param("iids", $sh['wallet_id'], $sh['investor_id'], $dividend_share, $txn_ref);
+            $log_sh->execute();
         }
     }
 

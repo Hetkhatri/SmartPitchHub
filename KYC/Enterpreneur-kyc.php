@@ -1066,14 +1066,18 @@ ob_end_flush();
   <header class="header">
     <div class="container">
       <div class="header-content">
-        <div class="logo-container">
+        <a href="../dashboards/Entrepreneur-dashboard.php" class="logo-container" style="text-decoration: none; color: inherit;">
           <div class="logo-icon">S</div>
           <div class="logo-text">
             <h1>SmartPitchHub</h1>
             <p>Startup Fundraising Platform</p>
           </div>
-        </div>
+        </a>
         <div class="header-right">
+          <a href="../dashboards/Entrepreneur-dashboard.php" class="btn-ghost" style="text-decoration: none; gap: 0.5rem; padding-right: 1rem;">
+            <svg class="icon-sm" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+            <span class="font-medium text-sm">Dashboard</span>
+          </a>
           <div class="ssl-badge">
             <svg class="icon-sm" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
             256-bit SSL Encrypted
@@ -1090,6 +1094,12 @@ ob_end_flush();
   <main class="main-content">
     <div class="container">
       <div class="max-w-4xl">
+        <div style="margin-bottom: 1.5rem;">
+          <a href="../dashboards/Entrepreneur-dashboard.php" class="btn-secondary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem;">
+            <svg class="icon-sm" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+            Back to Dashboard
+          </a>
+        </div>
         <div class="page-header">
           <div class="page-header-badge">
             <svg class="icon-sm" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
@@ -2002,7 +2012,8 @@ ob_end_flush();
     }
 
     // ============= Initial Render =============
-    if (KYC_DATA.status === 'pending' || KYC_DATA.status === 'verified') {
+    // Only show status card if actually pending (has submission) or verified
+    if ((KYC_DATA.status === 'pending' && KYC_DATA.existing) || KYC_DATA.status === 'verified') {
         const scard = document.getElementById('statusCard');
         const sicon = scard.querySelector('.status-icon');
         const stitle = scard.querySelector('h2');

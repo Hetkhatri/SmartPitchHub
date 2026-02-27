@@ -376,6 +376,12 @@ async function fetchKYCStatus() {
     const data = await response.json();
 
     if (data.status === "success") {
+      // NEW: Redirect if not submitted
+      if (data.has_submitted === false || data.kyc_status === 'not_submitted') {
+        window.location.href = "Enterpreneur-kyc.php";
+        return;
+      }
+
       // 1. Update Global Status Variable
       currentStatus = data.kyc_status; // 'under_review', 'approved', or 'rejected'
 

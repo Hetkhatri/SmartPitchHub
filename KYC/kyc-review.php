@@ -1,4 +1,39 @@
-    <!DOCTYPE html>
+<?php
+ob_start();
+session_start();
+require_once '../db.php';
+
+// 1. Security Check
+if (!isset($_SESSION['user_id'])) {
+    header("Location: ../login.php");
+    exit;
+}
+
+$user_id = $_SESSION['user_id'];
+
+// 2. Fetch KYC details
+$kyc_data = null;
+$sql = "SELECT * FROM entrepreneur_kyc_details WHERE entrepreneur_id = ?";
+if ($stmt = $conn->prepare($sql)) {
+    $stmt->bind_param("i", $user_id);
+    $stmt->execute();
+    $kyc_data = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+}
+
+// 3. If no record exists, they haven't submitted yet - redirect to the KYC form
+if (!$kyc_data || empty($kyc_data['submission_date'])) {
+    header("Location: Enterpreneur-kyc.php");
+    ob_end_clean();
+    exit;
+}
+
+$status = $kyc_data['status']; // 'under_review', 'approved', 'rejected'
+$rejection_reason = $kyc_data['rejection_reason'] ?? '';
+$submission_date = date("F j, Y at g:i A", strtotime($kyc_data['submission_date']));
+ob_end_flush();
+?>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">

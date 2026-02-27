@@ -59,9 +59,21 @@ try {
 
     if (!$pitch) throw new Exception("Pitch not found.");
 
-    $share_price = $pitch['share_price'];
+    // --- SMART PRICE LOGIC (Matches Console) ---
+    $db_shares_issued = isset($pitch['shares_issued']) && $pitch['shares_issued'] > 0 ? intval($pitch['shares_issued']) : 100000;
+    $db_share_price = isset($pitch['share_price']) && $pitch['share_price'] > 0 ? floatval($pitch['share_price']) : 0;
+    $db_valuation = isset($pitch['valuation']) && $pitch['valuation'] > 0 ? floatval($pitch['valuation']) : 0;
+
+    if ($db_share_price > 0) {
+        $share_price = $db_share_price;
+    } elseif ($db_valuation > 0) {
+        $share_price = $db_valuation / $db_shares_issued;
+    } else {
+        $share_price = ($pitch['funding_goal'] * 7.5) / $db_shares_issued;
+    }
+
     $total_cost = $shares_to_buy * $share_price;
-    $remaining_in_round = $pitch['shares_issued'] - ($pitch['sold_count'] ?? 0);
+    $remaining_in_round = $db_shares_issued - ($pitch['sold_count'] ?? 0);
 
     if ($shares_to_buy > $remaining_in_round) {
         throw new Exception("Not enough shares available in this round. Remaining: " . $remaining_in_round);

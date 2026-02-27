@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SmartPitch Hub - Coming Soon</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Inter", sans-serif;
+        background: hsl(230, 35%, 7%);
+        color: hsl(220, 20%, 92%);
+        min-height: 100vh;
+        overflow: hidden;
+      }
+
+      canvas {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+      }
+
+      .gradient-bg {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        background:
+          radial-gradient(
+            ellipse at 50% 0%,
+            hsla(270, 80%, 60%, 0.15) 0%,
+            transparent 60%
+          ),
+          radial-gradient(
+            ellipse at 80% 50%,
+            hsla(220, 70%, 50%, 0.1) 0%,
+            transparent 50%
+          ),
+          radial-gradient(
+            ellipse at 20% 80%,
+            hsla(270, 80%, 60%, 0.08) 0%,
+            transparent 50%
+          );
+      }
+
+      .container {
+        position: relative;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        padding: 3rem 1rem;
+      }
+
+      .icon-box {
+        width: 80px;
+        height: 80px;
+        border-radius: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 2rem;
+        background: hsla(230, 40%, 12%, 0.6);
+        backdrop-filter: blur(20px);
+        border: 1px solid hsla(270, 80%, 60%, 0.15);
+        box-shadow:
+          0 0 30px hsla(270, 80%, 60%, 0.2),
+          0 0 60px hsla(270, 80%, 60%, 0.1),
+          inset 0 1px 0 hsla(270, 80%, 60%, 0.1);
+        opacity: 0;
+        animation: fadeInScale 0.8s 0.2s ease forwards;
+      }
+
+      .icon-box svg {
+        width: 40px;
+        height: 40px;
+        color: hsl(270, 80%, 65%);
+      }
+
+      .brand {
+        font-family: "Orbitron", sans-serif;
+        font-size: 0.875rem;
+        letter-spacing: 0.3em;
+        text-transform: uppercase;
+        color: hsl(220, 15%, 55%);
+        margin-bottom: 1rem;
+        opacity: 0;
+        animation: fadeInUp 0.6s 0.4s ease forwards;
+      }
+
+      .heading {
+        font-family: "Orbitron", sans-serif;
+        font-size: clamp(3rem, 8vw, 6rem);
+        font-weight: 900;
+        text-align: center;
+        margin-bottom: 1.5rem;
+        line-height: 1.1;
+        letter-spacing: -0.02em;
+        text-shadow:
+          0 0 20px hsla(270, 80%, 60%, 0.6),
+          0 0 60px hsla(270, 80%, 60%, 0.3);
+        opacity: 0;
+        animation: fadeInUp 0.7s 0.5s ease forwards;
+      }
+
+      .tagline {
+        color: hsl(220, 15%, 55%);
+        font-size: 1.05rem;
+        max-width: 28rem;
+        text-align: center;
+        line-height: 1.7;
+        opacity: 0;
+        animation: fadeIn 0.6s 0.7s ease forwards;
+      }
+
+      .footer {
+        margin-top: 4rem;
+        color: hsl(220, 15%, 55%);
+        font-size: 0.75rem;
+        letter-spacing: 0.1em;
+        opacity: 0;
+        animation: fadeIn 0.6s 1s ease forwards;
+      }
+
+      @keyframes fadeInUp {
+        from {
+          opacity: 0;
+          transform: translateY(20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+
+      @keyframes fadeInScale {
+        from {
+          opacity: 0;
+          transform: scale(0) rotate(-180deg);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1) rotate(0deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="gradient-bg"></div>
+    <canvas id="particles"></canvas>
+
+    <div class="container">
+      <div class="icon-box">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path
+            d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"
+          />
+          <path
+            d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"
+          />
+          <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
+          <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
+        </svg>
+      </div>
+
+      <p class="brand">SmartPitch Hub</p>
+      <h1 class="heading">Coming Soon</h1>
+      <p class="tagline">
+        We're building something extraordinary. Stay tuned for the future of
+        smart pitching.
+      </p>
+      <p class="footer">© 2025 SmartPitch Hub. All rights reserved.</p>
+    </div>
+
+    <script>
+      const canvas = document.getElementById("particles");
+      const ctx = canvas.getContext("2d");
+      const particles = [];
+
+      function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+      }
+      resize();
+      window.addEventListener("resize", resize);
+
+      for (let i = 0; i < 80; i++) {
+        particles.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          vx: (Math.random() - 0.5) * 0.3,
+          vy: (Math.random() - 0.5) * 0.3,
+          size: Math.random() * 2 + 0.5,
+          alpha: Math.random() * 0.5 + 0.1,
+        });
+      }
+
+      function animate() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        particles.forEach((p) => {
+          p.x += p.vx;
+          p.y += p.vy;
+          if (p.x < 0) p.x = canvas.width;
+          if (p.x > canvas.width) p.x = 0;
+          if (p.y < 0) p.y = canvas.height;
+          if (p.y > canvas.height) p.y = 0;
+
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(160, 120, 255, ${p.alpha})`;
+          ctx.fill();
+        });
+
+        for (let i = 0; i < particles.length; i++) {
+          for (let j = i + 1; j < particles.length; j++) {
+            const dx = particles[i].x - particles[j].x;
+            const dy = particles[i].y - particles[j].y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < 150) {
+              ctx.beginPath();
+              ctx.moveTo(particles[i].x, particles[i].y);
+              ctx.lineTo(particles[j].x, particles[j].y);
+              ctx.strokeStyle = `rgba(140, 100, 255, ${0.08 * (1 - dist / 150)})`;
+              ctx.lineWidth = 0.5;
+              ctx.stroke();
+            }
+          }
+        }
+
+        requestAnimationFrame(animate);
+      }
+      animate();
+    </script>
+  </body>
+</html>
+co

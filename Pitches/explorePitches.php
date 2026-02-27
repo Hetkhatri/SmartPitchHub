@@ -23,11 +23,13 @@ $sql = "
         p.views, 
         p.interested_investors as interestedInvestors, 
         p.is_approved as isAdminApproved,
+        COALESCE((SELECT SUM(amount) FROM investments WHERE pitch_id = p.id AND status = 'completed'), 0) as amount_raised,
         CASE WHEN ov.status = 'verified' THEN 1 ELSE 0 END as isFounderVerified
     FROM pitches p
     JOIN entrepreneurs e ON p.entrepreneur_id = e.id
     LEFT JOIN otp_verifications ov ON e.email = ov.email
-    WHERE p.is_approved = 1
+    WHERE p.is_approved = 1 
+      AND EXISTS (SELECT 1 FROM warzone_sessions WHERE pitch_id = p.id AND status = 'completed')
     ORDER BY p.created_at DESC
 ";
 
@@ -37,6 +39,10 @@ $pitches_data = [];
 if ($result) {
     while ($row = $result->fetch_assoc()) {
         // Format fields to match your Frontend expectations exactly
+        $raised = (float)$row['amount_raised'];
+        $goal = (float)$row['funding_goal'];
+        $row['progress'] = ($goal > 0) ? min(100, round(($raised / $goal) * 100)) : 0;
+        $row['raisedAmount'] = '₹' . number_format($raised);
         $row['fundingRequired'] = '₹' . number_format($row['funding_goal']);
         $row['id'] = (int)$row['id'];
         $row['likes'] = (int)$row['likes'];
@@ -168,6 +174,12 @@ $json_data = json_encode($pitches_data);
         .funding-label { font-size: 0.75rem; color: var(--muted-foreground); }
         .funding-amount { font-size: 1.125rem; font-weight: 600; color: var(--primary); }
         
+        /* Progress Bar Styles */
+        .progress-container { margin: 1rem 0; }
+        .progress-meta { display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 0.5rem; }
+        .progress-bar { height: 6px; background: var(--secondary); border-radius: 3px; overflow: hidden; }
+        .progress-fill { height: 100%; background: var(--primary); transition: width 0.5s ease; }
+
         .stage-badge { padding: 0.375rem 0.75rem; font-size: 0.75rem; font-weight: 500; border-radius: 9999px; border: 1px solid; }
         .stage-badge.idea { background: var(--badge-blue-bg); color: var(--badge-blue-text); border-color: rgba(96, 165, 250, 0.3); }
         .stage-badge.mvp { background: var(--badge-amber-bg); color: var(--badge-amber-text); border-color: rgba(251, 191, 36, 0.3); }
@@ -382,6 +394,17 @@ $json_data = json_encode($pitches_data);
                         </div>
                         <span class="stage-badge ${stageClass}">${startup.stage}</span>
                     </div>
+
+                    <div class="progress-container">
+                        <div class="progress-meta">
+                            <span>Progress</span>
+                            <span>${startup.progress}%</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${startup.progress}%"></div>
+                        </div>
+                    </div>
+
                     <div class="card-stats">
                         <span class="stat-item">${icons.heart} <span class="like-count">${likeCount}</span></span>
                         <span class="stat-item">${icons.eye} ${startup.views}</span>

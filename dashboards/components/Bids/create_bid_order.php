@@ -49,11 +49,15 @@ $amount = $pack['price'] * 100;
 
 try {
     // 5. Create Razorpay Order
+    if (!class_exists('Razorpay\Api\Api')) {
+        throw new Exception("Razorpay SDK not found. Please ensure you have run 'composer install' in the project root.");
+    }
+    
     $api = new Api(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET);
 
     $orderData = [
         'receipt'         => 'bid_' . time(),
-        'amount'          => $amount,
+        'amount'          => intval($amount),
         'currency'        => RAZORPAY_CURRENCY,
         'payment_capture' => 1
     ];

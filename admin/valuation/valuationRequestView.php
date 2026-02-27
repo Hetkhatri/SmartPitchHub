@@ -1319,8 +1319,12 @@ if (!$data) {
         showToast('Validation Error', 'Please enter the approved valuation amount.');
         return;
       }
-      const fullRemarks = `MODIFIED VALUATION: ${val}\n\nNotes: ${comment}`;
-      processStatusUpdate('verified', 'Valuation Modified & Approved', fullRemarks);
+
+      // Strip currency symbols and commas before sending
+      const cleanVal = val.replace(/[^\d.]/g, '');
+      
+      const fullRemarks = `VALUATION MODIFIED TO: ₹${parseFloat(cleanVal).toLocaleString('en-IN')}\n\nNotes: ${comment}`;
+      processStatusUpdate('verified', 'Valuation Modified & Approved', fullRemarks, cleanVal);
     }
 
     function handleReject() {
@@ -1332,11 +1336,14 @@ if (!$data) {
       processStatusUpdate('rejected', 'Valuation Rejected', reason);
     }
 
-    function processStatusUpdate(status, successTitle, remarks = '') {
+    function processStatusUpdate(status, successTitle, remarks = '', modifiedVal = null) {
       const formData = new FormData();
       formData.append('id', <?php echo $id; ?>);
       formData.append('status', status);
       formData.append('remarks', remarks);
+      if (modifiedVal) {
+        formData.append('modified_valuation', modifiedVal);
+      }
 
       // Disable buttons
       document.querySelectorAll('.btn').forEach(b => b.disabled = true);

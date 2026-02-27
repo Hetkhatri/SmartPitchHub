@@ -6,8 +6,9 @@ ini_set('display_errors', 0);
 require_once '../db.php'; 
 session_start();
 
-$GEMINI_API_KEY = 'YOUR_GROQ_API_KEY'; 
-$ABSTRACT_API_KEY = 'YOUR_ABSTRACT_API_KEY';
+$config = require '../config.php';
+$AI_API_KEY = $config['groq_api_key']; 
+$ABSTRACT_API_KEY = $config['abstract_api_key'] ?? '';
 
 if (!isset($_SESSION['user_id'])) {
     header("Location: ../login.php");
@@ -38,7 +39,10 @@ if ($kyc_status !== 'approved') {
     exit;
 }
 
-if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {}
+if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
+    die("Invalid Pitch ID.");
+}
+$pitch_id = intval($_GET['id']);
 
 if (isset($_SESSION['ai_cache_'.$pitch_id])) unset($_SESSION['ai_cache_'.$pitch_id]); 
 
@@ -71,6 +75,7 @@ function fetch_smart_pitch_ai($pitch, $api_key, $forced_valuation = null) {
     Tagline: " . ($pitch['tagline'] ?? 'N/A') . "
     Industry: " . ($pitch['industry'] ?? 'N/A') . "
     Current Stage: " . ($pitch['stage'] ?? 'N/A') . "
+    Founder Defense (Warzone AI Audit Score): " . ($pitch['warzone_score'] ?? 'Not Tested') . "/100
     Target Funding: ₹" . number_format($pitch['funding_goal'] ?? 0) . "
     Asks Valuation: ₹" . number_format($valuation_value) . "
     Startup Description: " . substr($clean_description, 0, 1500) . "
@@ -155,23 +160,35 @@ function check_smart_fraud($email, $api_key) {
     return json_decode($res, true);
 }
 
-// ECONOMICS CALCULATION (Moved up for AI consumption)
-$round_total_shares = $pitch['shares_issued'] > 0 ? $pitch['shares_issued'] : 50000;
-$total_shares = $round_total_shares;
+// ECONOMICS CALCULATION (Database-First Truth)
+$db_shares_issued = isset($pitch['shares_issued']) && $pitch['shares_issued'] > 0 ? intval($pitch['shares_issued']) : 100000;
+$db_share_price = isset($pitch['share_price']) && $pitch['share_price'] > 0 ? floatval($pitch['share_price']) : 0;
+$db_valuation = isset($pitch['valuation']) && $pitch['valuation'] > 0 ? floatval($pitch['valuation']) : 0;
 
-if ($pitch['valuation'] > 0) {
-    $current_valuation = $pitch['valuation'];
+// Derive Logic:
+if ($db_share_price > 0) {
+    // 1. If Share Price is explicitly defined in DB, use it as the MASTER price.
+    $current_share_price = $db_share_price;
+    $round_total_shares = $db_shares_issued;
+    $current_valuation = ($db_valuation > 0) ? $db_valuation : ($current_share_price * $round_total_shares);
+} elseif ($db_valuation > 0) {
+    // 2. If Price is 0 but Valuation exists, derive price from valuation.
+    $current_valuation = $db_valuation;
+    $round_total_shares = $db_shares_issued;
     $current_share_price = $current_valuation / $round_total_shares;
-} elseif ($pitch['share_price'] > 0) {
-    $current_share_price = $pitch['share_price'];
-    $current_valuation = $current_share_price * $round_total_shares;
 } else {
-    $current_valuation = $pitch['funding_goal'] * 7.5; 
+    // 3. Fallback: Seed Round Baseline (7.5x Funding Goal)
+    $current_valuation = ($pitch['funding_goal'] > 0) ? ($pitch['funding_goal'] * 7.5) : 1000000; 
+    $round_total_shares = $db_shares_issued;
     $current_share_price = $current_valuation / $round_total_shares;
 }
 
+$total_shares = $round_total_shares;
+$share_price = $current_share_price;
+$valuation = $current_valuation;
+
 // Improved AI result handling (Passing correctly calculated valuation)
-$ai_data = fetch_smart_pitch_ai($pitch, $GEMINI_API_KEY, $current_valuation);
+$ai_data = fetch_smart_pitch_ai($pitch, $AI_API_KEY, $current_valuation);
 $ai_verdict = $ai_data['investment_verdict'] ?? "Hold";
 $ai_rationale = !empty($ai_data['detailed_rationale']) ? $ai_data['detailed_rationale'] : "Our analyst team is currently refining the detailed thesis for the ".htmlspecialchars($pitch['industry'])." market. Please allow 30-60 seconds for the cloud intelligence models to finalize the multi-dimensional risk scoring.";
 
@@ -185,6 +202,33 @@ if (isset($_SESSION['user_id'])) {
     $investor_wallet_balance = $w_res ? floatval($w_res['balance']) : 0.00;
     $w_stmt->close();
 }
+
+$user_balance = $investor_wallet_balance;
+
+// --- NEW: BID SYSTEM CHECK ---
+$bid_balance = 0;
+$bids_required = intval($pitch['required_bids'] ?? 2);
+$is_unlocked = false;
+
+if (isset($_SESSION['user_id'])) {
+    // 1. Get current bid balance
+    $b_stmt = $conn->prepare("SELECT total_bids FROM investor_bids WHERE investor_id = ?");
+    $b_stmt->bind_param("i", $_SESSION['user_id']);
+    $b_stmt->execute();
+    $b_res = $b_stmt->get_result()->fetch_assoc();
+    $bid_balance = $b_res ? intval($b_res['total_bids']) : 0;
+    $b_stmt->close();
+
+    // 2. Check if already invested (Bids only deducted once per startup)
+    $c_stmt = $conn->prepare("SELECT id FROM investments WHERE investor_id = ? AND pitch_id = ? AND status = 'completed' LIMIT 1");
+    $c_stmt->bind_param("ii", $_SESSION['user_id'], $pitch_id);
+    $c_stmt->execute();
+    if ($c_stmt->get_result()->num_rows > 0) {
+        $is_unlocked = true; // Already paid bids or invested before
+    }
+    $c_stmt->close();
+}
+
 $ai_val_text = $ai_data['valuation_insight'] ?? "Stable metrics.";
 $risk_level = $ai_data['risk_level'] ?? "Medium";
 $risk_css = strtolower($risk_level);
@@ -209,13 +253,17 @@ $fraud_score = min(99, $fraud_score);
 
 // FORMATTERS
 $val_fmt = ($current_valuation >= 10000000) ? "₹" . number_format($current_valuation / 10000000, 2) . " Cr" : "₹" . number_format($current_valuation);
-$share_price = $current_share_price;
-$valuation = $current_valuation;
 
 $shares_res = $conn->query("SELECT SUM(shares_bought) as total_sold FROM investments WHERE pitch_id = $pitch_id AND status = 'completed'");
 $shares_actually_sold = ($shares_res) ? $shares_res->fetch_assoc()['total_sold'] : 0;
 $display_remaining = max(0, $round_total_shares - $shares_actually_sold);
 $percent_left = ($round_total_shares > 0) ? ($display_remaining / $round_total_shares) * 100 : 0;
+
+// Funding Progress Calculation
+$funding_res = $conn->query("SELECT SUM(amount) as total_raised FROM investments WHERE pitch_id = $pitch_id AND status = 'completed'");
+$total_raised = ($funding_res) ? $funding_res->fetch_assoc()['total_raised'] : 0;
+$funding_goal = floatval($pitch['funding_goal']);
+$funding_progress = ($funding_goal > 0) ? min(100, ($total_raised / $funding_goal) * 100) : 0;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -1869,6 +1917,13 @@ $percent_left = ($round_total_shares > 0) ? ($display_remaining / $round_total_s
               <p class="valuation-value gradient-text-cyan number-glow"><?php echo $val_fmt; ?></p>
             </div>
             
+            <?php if (isset($pitch['warzone_score']) && $pitch['warzone_score'] > 0): ?>
+              <div class="verification-pill" style="background: rgba(167, 139, 250, 0.1); border: 1px solid #8b5cf6; color: #a78bfa; padding: 6px 12px; border-radius: 8px; display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                  <span>Warzone Score: <?php echo $pitch['warzone_score']; ?>%</span>
+              </div>
+            <?php endif; ?>
+
             <?php 
               $is_valuation_approved = ($pitch['is_approved'] == 1);
               if ($is_valuation_approved): 
@@ -1961,6 +2016,22 @@ $percent_left = ($round_total_shares > 0) ? ($display_remaining / $round_total_s
           <rect width="16" height="20" x="4" y="2" rx="2"/><line x1="8" x2="16" y1="6" y2="6"/><line x1="16" x2="16" y1="14" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/>
         </svg>
         <span>Smart Share Economics</span>
+      </div>
+
+      <!-- Funding Goal Progress (New) -->
+      <div class="glass-card" style="margin-bottom: 2rem; padding: 2rem;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1rem;">
+              <div>
+                  <h3 style="font-size: 0.9rem; color: var(--foreground-muted); text-transform: uppercase; letter-spacing: 1px;">Funding Progress</h3>
+                  <p style="font-size: 1.5rem; font-weight: 800; color: #fff;">₹<?php echo number_format($total_raised); ?> <span style="font-size: 0.9rem; font-weight: 400; color: var(--foreground-muted);">of ₹<?php echo number_format($funding_goal); ?> Goal</span></p>
+              </div>
+              <div style="text-align: right;">
+                  <span style="font-size: 1.5rem; font-weight: 900; color: var(--primary);"><?php echo number_format($funding_progress, 1); ?>%</span>
+              </div>
+          </div>
+          <div style="height: 12px; background: rgba(255,255,255,0.05); border-radius: 6px; overflow: hidden; border: 1px solid rgba(255,255,255,0.1);">
+              <div style="width: <?php echo $funding_progress; ?>%; height: 100%; background: linear-gradient(90deg, var(--accent-purple), var(--primary)); box-shadow: 0 0 20px rgba(139, 92, 246, 0.4); transition: width 1s ease-out;"></div>
+          </div>
       </div>
 
       <div class="economics-grid">
@@ -2153,7 +2224,7 @@ $percent_left = ($round_total_shares > 0) ? ($display_remaining / $round_total_s
           </div>
 
           <div class="glass-card calc-card">
-            <p class="calc-label">Ownership Stake</p>
+            <p class="calc-label">Share Allocation</p>
             <p class="calc-value gradient-text-purple number-glow" id="ownershipStake">0.100%</p>
           </div>
 
@@ -2548,6 +2619,18 @@ if (isset($_SESSION['user_id'])) {
           <span class="sm-label">Shares:</span>
           <span class="sm-value" id="modalShareCountDisplay">1,000</span>
         </div>
+        <div class="sm-row" style="border-top: 1px dashed rgba(255,255,255,0.1); padding-top: 8px; margin-top: 4px;">
+          <span class="sm-label">Access Bids:</span>
+          <span class="sm-value">
+            <?php if ($is_unlocked): ?>
+                <span style="color: #4ade80;">Unlocked 🔓</span>
+            <?php else: ?>
+                <span style="color: <?php echo ($bid_balance >= $bids_required) ? '#a78bfa' : '#f87171'; ?>;">
+                    <?php echo $bids_required; ?> Bids
+                </span>
+            <?php endif; ?>
+          </span>
+        </div>
         <div class="sm-row sm-total">
           <span class="sm-label" style="color: var(--primary);">Total Amount:</span>
           <span class="sm-value" style="color: var(--primary);" id="modalTotalAmountDisplay">₹0</span>
@@ -2779,13 +2862,16 @@ if (isset($_SESSION['user_id'])) {
             
             // Check if wallet can afford it
             const userBalance = <?php echo $investor_wallet_balance; ?>;
-            if (userBalance < total) {
+            const userBids = <?php echo $bid_balance; ?>;
+            const reqBids = <?php echo $bids_required; ?>;
+            const isUnlocked = <?php echo $is_unlocked ? 'true' : 'false'; ?>;
+
+            if (!isUnlocked && userBids < reqBids) {
                 payWithWalletBtn.disabled = true;
                 payWithWalletBtn.style.opacity = '0.5';
                 payWithWalletBtn.style.cursor = 'not-allowed';
-                payWithWalletBtn.querySelector('.option-desc').textContent = 'Insufficient balance (₹' + userBalance.toLocaleString() + ')';
-                payWithWalletBtn.querySelector('.option-desc').style.color = '#ef4444';
-            } else {
+                payWithWalletBtn.querySelector('.option-desc').innerHTML = '<span style="color: #ef4444;">Insufficient Bids (' + userBids + '/' + reqBids + ').</span> <a href="../dashboards/components/Bids/bids.php" target="_blank" style="color: #a78bfa; text-decoration: underline;">Buy Bids</a>';
+            } else if (userBalance < total) {
                 payWithWalletBtn.disabled = false;
                 payWithWalletBtn.style.opacity = '1';
                 payWithWalletBtn.style.cursor = 'pointer';

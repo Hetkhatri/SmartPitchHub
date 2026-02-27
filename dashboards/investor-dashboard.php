@@ -16,13 +16,14 @@ if (!file_exists('../db.php')) {
     die("<div style='padding:20px;color:red;font-family:sans-serif;'><strong>Error:</strong> db.php is missing. Please ensure it is in the parent folder.</div>");
 }
 require_once '../db.php';
+$config = require '../config.php';
 
 // =================================================================
 // 2. AUTHENTICATION & KYC CHECK
 // =================================================================
 if (!isset($_SESSION['user_id'])) {
-    $_SESSION['user_id'] = 4; // Default to 'Het' for demo
-    $_SESSION['user_role'] = 'investor';
+    header("Location: ../login.php");
+    exit;
 }
 $user_id = $_SESSION['user_id'];
 $user_name = "Investor"; 
@@ -50,7 +51,8 @@ try {
     error_log("KYC Check Error: " . $e->getMessage());
 }
 
-$show_kyc_popup = !$kyc_submitted;
+// Barrier Logic: Show popup if No Record OR Rejected
+$show_kyc_popup = (!$kyc_submitted || $kyc_status === 'rejected');
 
 // =================================================================
 // 3. HANDLE INVESTMENT SUBMISSION
@@ -238,7 +240,7 @@ try {
     $total_profit = $portfolio_value - $total_invested;
     $profit_percent = ($total_invested > 0) ? ($total_profit / $total_invested) * 100 : 0;
 
-    // My Investments List - Grouped by Pitch for Portfolio View
+    // My Investments List - Grouped by Pitch & Status for Portfolio View
     $stmt = $conn->prepare("
         SELECT 
             p.id as pitch_id, 
@@ -247,15 +249,16 @@ try {
             p.share_price as current_price,
             p.round_status,
             p.expiry_date,
+            i.payout_status,
             SUM(i.shares_bought) as total_shares,
             SUM(i.amount) as total_spent,
             CASE WHEN SUM(i.shares_bought) > 0 THEN (SUM(i.amount) / SUM(i.shares_bought)) ELSE 0 END as avg_price
         FROM investments i 
         JOIN pitches p ON i.pitch_id = p.id 
-        WHERE i.investor_id = ? 
-        GROUP BY p.id
+        WHERE i.investor_id = ? AND i.status = 'completed'
+        GROUP BY p.id, i.payout_status
         HAVING total_shares > 0
-        ORDER BY total_shares DESC
+        ORDER BY i.payout_status DESC, total_shares DESC
     ");
     $stmt->bind_param("i", $user_id);
     $stmt->execute();
@@ -281,7 +284,9 @@ try {
     $result = $conn->query("
         SELECT p.*, COALESCE(SUM(i.amount), 0) as amount_raised, COUNT(DISTINCT i.investor_id) as investor_count
         FROM pitches p LEFT JOIN investments i ON p.id = i.pitch_id AND i.status = 'completed'
-        WHERE p.is_approved = 1 GROUP BY p.id");
+        WHERE p.is_approved = 1 
+          AND EXISTS (SELECT 1 FROM warzone_sessions WHERE pitch_id = p.id AND status = 'completed')
+        GROUP BY p.id");
     
     $all_pitches = $result->fetch_all(MYSQLI_ASSOC);
 
@@ -311,7 +316,9 @@ try {
     'location' => !empty($p['location']) ? htmlspecialchars($p['location']) : "Remote",
     'stage' => !empty($p['stage']) ? htmlspecialchars($p['stage']) : "Seed",
     'raisedRaw' => $p['amount_raised'],
-    'goalRaw' => $p['funding_goal']
+    'goalRaw' => $p['funding_goal'],
+    'expiryDate' => $p['expiry_date'],
+    'warzoneScore' => $p['warzone_score']
 ];
     }
 
@@ -609,6 +616,17 @@ try {
     .nav-item.active {
       background: var(--primary-glow);
       color: var(--primary);
+    }
+
+    .locked-item {
+      opacity: 0.5;
+      cursor: not-allowed !important;
+    }
+    
+    .nav-item.locked-item:hover {
+        background: transparent;
+        transform: none;
+        color: var(--text-muted);
     }
 
     .nav-item.active::before {
@@ -2973,52 +2991,67 @@ try {
           </svg>
           <span>Explore Pitches</span>
         </button>
-        <button class="nav-item" data-page="investments" onclick="showPage('investments')">
+
+        <a class="nav-item" href="components/Bids/bids.php" target="_blank">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/>
+            <path d="M13 5v2"/>
+            <path d="M13 17v2"/>
+            <path d="M13 11v2"/>
+          </svg>
+          <span>Buy Bids</span>
+        </a>
+        
+        <?php $kyc_ok = (isset($kyc_status) && $kyc_status === 'approved'); ?>
+
+        <button class="nav-item <?php echo !$kyc_ok ? 'locked-item' : ''; ?>" 
+                <?php echo $kyc_ok ? 'data-page="investments" onclick="showPage(\'investments\')"' : 'onclick="alert(\'Verification Required: Please complete KYC to view your portfolio.\')"'; ?>>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
             <rect width="20" height="14" x="2" y="6" rx="2"/>
           </svg>
-          <span>Portfolio</span>
+          <span>Portfolio <?php if(!$kyc_ok) echo '🔒'; ?></span>
         </button>
-        <button class="nav-item" data-page="secondary" onclick="showPage('secondary')">
+
+        <button class="nav-item <?php echo !$kyc_ok ? 'locked-item' : ''; ?>" 
+                <?php echo $kyc_ok ? 'data-page="secondary" onclick="showPage(\'secondary\')"' : 'onclick="alert(\'Verification Required: Trade Board is only available for verified investors.\')"'; ?>>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
           </svg>
           <span style="display: flex; align-items: center; gap: 5px;">
-            Trade Board
+            Trade Board <?php if(!$kyc_ok) echo '🔒'; ?>
+            <?php if($kyc_ok): ?>
             <span class="pulse-icon" style="width: 6px; height: 6px; background: var(--success); border-radius: 50%; border: 2px solid rgba(34, 197, 94, 0.3); animation: pulse-green 2s infinite;"></span>
+            <?php endif; ?>
           </span>
         </button>
+
         <button class="nav-item" data-page="saved" onclick="showPage('saved')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/>
           </svg>
           <span>Saved Pitches</span>
         </button>
-        <button class="nav-item" data-page="wallet" onclick="showPage('wallet')">
+
+        <button class="nav-item <?php echo !$kyc_ok ? 'locked-item' : ''; ?>" 
+                <?php echo $kyc_ok ? 'data-page="wallet" onclick="showPage(\'wallet\')"' : 'onclick="alert(\'Verification Required: Please verify your ID to manage your wallet.\')"'; ?>>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/>
             <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>
           </svg>
-          <span>Wallet</span>
+          <span>Wallet <?php if(!$kyc_ok) echo '🔒'; ?></span>
         </button>
-        <button class="nav-item" data-page="transactions" onclick="showPage('transactions')">
+
+        <button class="nav-item <?php echo !$kyc_ok ? 'locked-item' : ''; ?>" 
+                <?php echo $kyc_ok ? 'data-page="transactions" onclick="showPage(\'transactions\')"' : 'onclick="alert(\'Verification Required: Verify ID to view transaction history.\')"'; ?>>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1-2-1Z"/>
             <path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/>
             <path d="M12 17.5v-11"/>
           </svg>
-          <span>Transactions</span>
+          <span>Transactions <?php if(!$kyc_ok) echo '🔒'; ?></span>
         </button>
-       <a class="nav-item" href="components/Bids/bids.php">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/>
-        <path d="M13 5v2"/>
-        <path d="M13 17v2"/>
-        <path d="M13 11v2"/>
-    </svg>
-    <span>Buy Bids</span>
-</a>
+
         <button class="nav-item" onclick="window.location.href='../KYC/investor-kyc-status.php'">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <rect x="3" y="4" width="18" height="16" rx="3" />
@@ -3064,6 +3097,35 @@ try {
           <div class="theme-switch" id="themeSwitch" onclick="toggleTheme()"></div>
         </div>
       </div>
+
+      <?php
+      $k_status = $kyc_status ?? 'not_submitted';
+      $k_label = 'KYC Not Submitted';
+      $k_desc = 'Please complete your KYC.';
+      $k_color_hsl = '230, 20%, 18%'; // Grey-ish
+      $k_text_color = 'var(--text-muted)';
+      $k_icon = '<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />';
+
+      if ($k_status === 'approved') {
+          $k_label = 'KYC Verified';
+          $k_desc = 'You have full access.';
+          $k_color_hsl = '142, 76%, 36%'; // Green
+          $k_text_color = 'var(--success)';
+          $k_icon = '<path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />';
+      } elseif ($k_status === 'under_review') {
+          $k_label = 'KYC Under Review';
+          $k_desc = 'Verification in progress.';
+          $k_color_hsl = '38, 92%, 50%'; // Yellow
+          $k_text_color = 'var(--warning)';
+          $k_icon = '<path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />';
+      } elseif ($k_status === 'rejected') {
+          $k_label = 'KYC Rejected';
+          $k_desc = 'Please resubmit details.';
+          $k_color_hsl = '0, 72%, 51%'; // Red
+          $k_text_color = 'var(--destructive)';
+          $k_icon = '<path stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />';
+      }
+      ?>
 
       <div class="sidebar-footer">
         <div class="user-card">
@@ -3211,7 +3273,7 @@ try {
             </div>
             <div class="stat-value"><?php echo $active_investments; ?></div>
             <div class="stat-label">Active Holdings</div>
-            <div class="stat-subtitle">Equity positions</div>
+            <div class="stat-subtitle">Portfolio Assets</div>
           </div>
 
           <div class="stat-card">
@@ -3298,7 +3360,6 @@ try {
                   <div class="activity-title">Invested in <?php echo htmlspecialchars($inv['startup_name']); ?></div>
                  <div class="activity-desc">
     ₹<?php echo number_format($inv['amount']); ?> 
-    for <?php echo number_format($inv['shares_bought']); ?> shares
 </div>
                 </div>
                 <div class="activity-time"><?php echo date("M d, Y", strtotime($inv['created_at'])); ?></div>
@@ -3443,8 +3504,8 @@ try {
                   <p class="pitch-invest-stat-label">Investors</p>
                 </div>
                 <div class="pitch-invest-stat">
-                  <p class="pitch-invest-stat-value" id="pitchEquity">0%</p>
-                  <p class="pitch-invest-stat-label">Equity</p>
+                  <p class="pitch-invest-stat-value" id="pitchSharePrice">₹0</p>
+                  <p class="pitch-invest-stat-label">Share Price</p>
                 </div>
                 <div class="pitch-invest-stat">
                   <p class="pitch-invest-stat-value">30</p>
@@ -3624,10 +3685,10 @@ try {
                         $pl = ($inv['current_price'] - $inv['avg_price']) * $inv['total_shares'];
                         $pl_percent = ($inv['avg_price'] > 0) ? (($inv['current_price'] - $inv['avg_price']) / $inv['avg_price']) * 100 : 0;
                         
-                        // Secondary Market Gating: Can only sell if primary round is NOT active or has expired
-                        $round_active = (isset($inv['round_status']) && $inv['round_status'] === 'active');
-                        $expired = (isset($inv['expiry_date']) && strtotime($inv['expiry_date']) < time());
-                        $can_sell = (!$round_active || $expired);
+                        // Smart Locking: Allow selling if round is finalized (released) OR if the round is over
+                        $is_released = (isset($inv['payout_status']) && $inv['payout_status'] === 'released');
+                        $is_round_over = (isset($inv['round_status']) && $inv['round_status'] === 'completed') || (isset($inv['expiry_date']) && strtotime($inv['expiry_date']) < time());
+                        $can_sell = $is_released || $is_round_over;
                     ?>
                     <tr>
                       <td>
@@ -3637,7 +3698,13 @@ try {
                           </div>
                           <div>
                             <span style="font-weight: 500; display: block;"><?php echo htmlspecialchars($inv['startup_name']); ?></span>
-                            <span style="font-size: 11px; color: var(--text-muted);"><?php echo htmlspecialchars($inv['industry']); ?></span>
+                            <?php if ($can_sell && !$is_released): ?>
+                                <span style="font-size: 9px; padding: 2px 6px; background: rgba(59, 130, 246, 0.1); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 4px; text-transform: uppercase;">Round Over</span>
+                            <?php elseif (!$is_released): ?>
+                                <span style="font-size: 9px; padding: 2px 6px; background: rgba(245, 158, 11, 0.1); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.2); border-radius: 4px; text-transform: uppercase;">In Escrow</span>
+                            <?php else: ?>
+                                <span style="font-size: 9px; padding: 2px 6px; background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 4px; text-transform: uppercase;">Asset Holding</span>
+                            <?php endif; ?>
                           </div>
                         </div>
                       </td>
@@ -3668,7 +3735,7 @@ try {
                             <?php else: ?>
                                 <button class="btn btn-outline btn-sm" 
                                         style="padding: 4px 8px; font-size: 11px; border-color: var(--border); color: var(--text-muted); cursor: not-allowed; opacity: 0.6;" 
-                                        onclick="alert('🚫 Share Lock: You cannot sell shares while the primary fundraising round is still active. This protection ensures the entrepreneur reaches their funding goal before secondary trading begins.')">
+                                        onclick="alert('🚫 Smart Escrow Protection: Your shares are currently locked because the funding round is still LIVE. You can start selling in the secondary market once the round is completed or reaches its expiry date.')">
                                         LOCKED
                                 </button>
                             <?php endif; ?>
@@ -3805,7 +3872,7 @@ try {
                   </svg>
                   Withdraw
                 </button>
-                <button class="btn-action-premium bid-accent" onclick="window.location.href='components/Bids/bids.php'">
+                <button class="btn-action-premium bid-accent" onclick="window.open('components/Bids/bids.php', '_blank')">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                     <circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/><path d="m16.71 13.88.7.71-2.82 2.82"/>
                   </svg>
@@ -4012,51 +4079,100 @@ try {
         const qty = parseFloat(document.getElementById('sell-quantity').value) || 0;
         const price = parseFloat(document.getElementById('sell-price').value) || 0;
         
+        // Validation: Limit quantity
+        if (qty > activeHolding.totalShares) {
+            document.getElementById('sell-quantity').value = activeHolding.totalShares;
+            return updateSellCalculations();
+        }
+
         const revenue = qty * price;
         const cost = qty * activeHolding.avgPrice;
         const profit = revenue - cost;
+        const roi = activeHolding.avgPrice > 0 ? (profit / cost) * 100 : 0;
         
+        // 1. Update UI Labels
         document.getElementById('est-revenue').textContent = `₹${revenue.toLocaleString(undefined, {minimumFractionDigits: 2})}`;
         const profitEl = document.getElementById('est-profit');
-        profitEl.textContent = `${profit >= 0 ? '+' : ''}₹${profit.toLocaleString(undefined, {minimumFractionDigits: 2})}`;
-        profitEl.style.color = profit >= 0 ? 'var(--success)' : 'var(--destructive)';
+        
+        if (qty > 0) {
+            profitEl.innerHTML = `${profit >= 0 ? 'Profit: +' : 'Loss: '}₹${Math.abs(profit).toLocaleString(undefined, {minimumFractionDigits: 2})} <span style="font-size: 10px; opacity: 0.8;">(${roi.toFixed(1)}% ROI)</span>`;
+            profitEl.style.color = profit >= 0 ? '#10b981' : '#ef4444';
+        } else {
+            profitEl.textContent = '₹0.00';
+            profitEl.style.color = 'var(--text-muted)';
+        }
+
+        // 2. Smart Price Guard
+        const priceWarning = document.getElementById('price-guard-warning') || createPriceWarning();
+        if (price > activeHolding.currentPrice * 2) {
+            priceWarning.style.display = 'block';
+            priceWarning.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg> High Price! 200% above market. Might not sell.`;
+        } else {
+            priceWarning.style.display = 'none';
+        }
+    }
+
+    function createPriceWarning() {
+        const warn = document.createElement('div');
+        warn.id = 'price-guard-warning';
+        warn.style.cssText = 'font-size: 10px; color: #f59e0b; margin-top: 4px; display: flex; align-items: center;';
+        document.querySelector('.ai-price-suggestion').after(warn);
+        return warn;
     }
 
     // Event listeners for calculations
-    document.getElementById('sell-quantity').addEventListener('input', updateSellCalculations);
-    document.getElementById('sell-price').addEventListener('input', updateSellCalculations);
+    document.addEventListener('DOMContentLoaded', function() {
+        const sellQtyInput = document.getElementById('sell-quantity');
+        const sellPriceInput = document.getElementById('sell-price');
+        const sellForm = document.getElementById('sell-listing-form');
 
-    // Form Submission
-    document.getElementById('sell-listing-form').addEventListener('submit', function(e) {
-        e.preventDefault();
-        
-        const formData = new FormData(this);
-        const submitBtn = this.querySelector('.btn-list-sale');
-        submitBtn.disabled = true;
-        submitBtn.textContent = 'Listing on Market...';
+        if(sellQtyInput) sellQtyInput.addEventListener('input', updateSellCalculations);
+        if(sellPriceInput) sellPriceInput.addEventListener('input', updateSellCalculations);
 
-        fetch('api_secondary_market.php', {
-            method: 'POST',
-            body: formData
-        })
-        .then(res => res.json())
-        .then(data => {
-            if(data.success) {
-                alert('Success: Your shares are now listed on the Secondary Market!');
-                closeSellModal();
-                window.location.reload();
-            } else {
-                alert('Error: ' + data.message);
-                submitBtn.disabled = false;
-                submitBtn.textContent = 'List Shares for Sale';
-            }
-        })
-        .catch(err => {
-            console.error('Listing error:', err);
-            alert('Connection failure.');
-            submitBtn.disabled = false;
-            submitBtn.textContent = 'List Shares for Sale';
-        });
+        if(sellForm) {
+            sellForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const formData = new FormData(this);
+                const submitBtn = this.querySelector('.btn-list-sale');
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Listing on Market...';
+
+                fetch('api_secondary_market.php', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if(data.success) {
+                        Swal.fire({
+                            icon: 'success',
+                            title: 'Listing Active!',
+                            text: 'Your shares are now live on the secondary market. Other investors can now see and buy your offer.',
+                            confirmButtonColor: 'var(--primary)'
+                        }).then(() => {
+                            window.location.reload();
+                        });
+                        closeSellModal();
+                    } else {
+                        Swal.fire({
+                            icon: 'error',
+                            title: 'Listing Failed',
+                            text: data.message,
+                            confirmButtonColor: 'var(--primary)'
+                        });
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = 'List Shares for Sale';
+                    }
+                })
+                .catch(err => {
+                    console.error('Listing error:', err);
+                    Swal.fire('Error', 'Something went wrong with the market connection.', 'error');
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'List Shares for Sale';
+                });
+            });
+        }
     });
 
     // ====================== STEP 4: BUY SECONDARY ASSET JS ======================
@@ -4103,38 +4219,45 @@ try {
         document.getElementById('buy-total-payable').textContent = `₹${total.toLocaleString(undefined, {minimumFractionDigits: 2})}`;
     }
 
-    document.getElementById('buy-quantity').addEventListener('input', updateBuyCalculations);
+    document.addEventListener('DOMContentLoaded', function() {
+        const buyQtyInput = document.getElementById('buy-quantity');
+        const buyForm = document.getElementById('buy-trade-form');
 
-    document.getElementById('buy-trade-form').addEventListener('submit', function(e) {
-        e.preventDefault();
-        
-        const formData = new FormData(this);
-        const submitBtn = this.querySelector('.btn-confirm-buy');
-        submitBtn.disabled = true;
-        submitBtn.textContent = 'Processing Transaction...';
+        if(buyQtyInput) buyQtyInput.addEventListener('input', updateBuyCalculations);
 
-        fetch('api_secondary_buy.php', {
-            method: 'POST',
-            body: formData
-        })
-        .then(res => res.json())
-        .then(data => {
-            if(data.success) {
-                alert('Success: Transaction completed! Shares have been transferred to your portfolio.');
-                closeBuySecondaryModal();
-                window.location.reload();
-            } else {
-                alert('Trade Error: ' + data.message);
-                submitBtn.disabled = false;
-                submitBtn.textContent = 'Confirm & Secure Transfer';
-            }
-        })
-        .catch(err => {
-            console.error('Trade error:', err);
-            alert('Connection failure.');
-            submitBtn.disabled = false;
-            submitBtn.textContent = 'Confirm & Secure Transfer';
-        });
+        if(buyForm) {
+            buyForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const formData = new FormData(this);
+                const submitBtn = this.querySelector('.btn-confirm-buy');
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Processing Transaction...';
+
+                fetch('api_secondary_buy.php', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if(data.success) {
+                        alert('Success: Transaction completed! Shares have been transferred to your portfolio.');
+                        closeBuySecondaryModal();
+                        window.location.reload();
+                    } else {
+                        alert('Trade Error: ' + data.message);
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = 'Confirm & Secure Transfer';
+                    }
+                })
+                .catch(err => {
+                    console.error('Trade error:', err);
+                    alert('Connection failure.');
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Confirm & Secure Transfer';
+                });
+            });
+        }
     });
 
     function showMyListings() {
@@ -4211,6 +4334,18 @@ try {
             const bids = pitch.bids || 0;
             const investors = pitch.investors || 0;
             const progress = pitch.progress || 0;
+            const score = pitch.warzoneScore || 0;
+            const expiry = pitch.expiryDate;
+
+            // Timer Calculation
+            let timeLabel = "EXPIRED";
+            if(expiry) {
+                const diff = new Date(expiry) - new Date();
+                if(diff > 0) {
+                    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+                    timeLabel = days > 0 ? days + "d left" : "Ends today";
+                }
+            }
 
             html += `
                 <div class="pitch-card" style="position: relative; display: block;">
@@ -4219,6 +4354,15 @@ try {
                             <path fill-rule="evenodd" d="M14.615 1.595a.75.75 0 01.359.852L12.982 9.75h7.268a.75.75 0 01.548 1.262l-10.5 11.25a.75.75 0 01-1.272-.71l1.992-7.302H3.75a.75.75 0 01-.548-1.262l10.5-11.25a.75.75 0 01.913-.143z" clip-rule="evenodd" />
                         </svg>
                         <span>${bids} Bids</span>
+                    </div>
+
+                    <div style="position:absolute; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; z-index: 5;">
+                        <div class="badge badge-success" style="font-size: 10px; background: hsla(142, 72%, 29%, 0.1); border: 1px solid var(--success); color: var(--success);">
+                            AI Trust: ${score}%
+                        </div>
+                        <div class="badge" style="font-size: 10px; background: hsla(217, 91%, 60%, 0.1); border: 1px solid var(--primary); color: var(--primary);">
+                            ${timeLabel}
+                        </div>
                     </div>
 
                     <div class="pitch-header" onclick="location.href='../Pitches/view-pitch.php?id=${pitch.id}'" style="cursor: pointer;">
@@ -4322,14 +4466,15 @@ try {
         const tagline = pitch.tagline || (pitch.description ? pitch.description.substring(0, 60) + "..." : "No description available"); 
         const industry = pitch.category || "General"; 
         const goal = pitch.funding || "₹0"; 
-        const equity = pitch.equity || "0";
+        const sharePrice = pitch.share_price || "0";
+        const progress = pitch.progress || 0;
         const id = pitch.id;
         const imgUrl = pitch.logo;
 
         const cardHtml = `
             <div class="pitch-card">
                 <div class="pitch-header">
-                ${imgUrl && imgUrl.startsWith('http') 
+                ${imgUrl && (imgUrl.startsWith('http') || imgUrl.startsWith('data'))
                     ? `<img src="${imgUrl}" class="pitch-logo" style="object-fit:cover;">` 
                     : `<div class="pitch-logo">${name.charAt(0)}</div>`
                 }
@@ -4344,14 +4489,25 @@ try {
                 <span class="badge badge-primary">${industry}</span>
                 <span class="badge badge-success">Saved</span>
                 </div>
+
+                <div class="pitch-progress" style="margin: 12px 0;">
+                    <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px; color: var(--text-muted);">
+                        <span>Funding Progress</span>
+                        <span>${progress}%</span>
+                    </div>
+                    <div style="height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;">
+                        <div style="width: ${progress}%; height: 100%; background: var(--primary); transition: width 0.3s ease;"></div>
+                    </div>
+                </div>
+
                 <div class="pitch-stats">
                 <div class="pitch-stat">
                     <p class="pitch-stat-value">${goal}</p>
                     <p class="pitch-stat-label">Goal</p>
                 </div>
                 <div class="pitch-stat">
-                    <p class="pitch-stat-value">${equity}%</p>
-                    <p class="pitch-stat-label">Equity</p>
+                    <p class="pitch-stat-value">₹${sharePrice}</p>
+                    <p class="pitch-stat-label">Price</p>
                 </div>
                 </div>
                 <div class="pitch-actions" style="margin-top:15px; display:flex; gap:10px;">
@@ -4492,7 +4648,7 @@ try {
 
       <div class="sell-modal-header">
         <h2 style="font-size: 18px; font-weight: 700;">List Asset for Sale</h2>
-        <p style="font-size: 13px; color: var(--text-muted);">Convert your equity into instant liquidity.</p>
+        <p style="font-size: 13px; color: var(--text-muted);">Convert your shares into instant liquidity.</p>
       </div>
 
       <div class="sell-modal-body">
@@ -4689,7 +4845,7 @@ try {
         const amountInPaisa = Math.round(realAmount * 100);
         
         const options = {
-            "key": "rzp_test_RqNEO4nEE8Twff",
+            "key": "<?php echo $config['razorpay_key']; ?>",
             "amount": amountInPaisa, 
             "currency": "INR",
             "name": "SmartPitchHub Escrow",
@@ -4945,7 +5101,7 @@ try {
         </a>
         
         <button class="kyc-skip-btn" onclick="document.getElementById('investorKycOverlay').style.display='none'">
-            Skip for now, keep exploring
+            Skip for now
         </button>
     </div>
 </div>

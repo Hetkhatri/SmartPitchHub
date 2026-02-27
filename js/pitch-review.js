@@ -38,6 +38,11 @@ const statusConfig = {
     icon: icons.alertTriangle,
     badgeClass: "status-badge-rejected",
   },
+  pending_warzone: {
+    label: "Warzone Required",
+    icon: icons.alertTriangle,
+    badgeClass: "status-badge-review",
+  },
 };
 
 function updateTimeline(status) {
@@ -46,7 +51,10 @@ function updateTimeline(status) {
     const stepId = parseInt(step.dataset.step);
     let state = "pending";
     if (status === "approved") state = "complete";
-    else if (status === "under_review") {
+    else if (status === "pending_warzone") {
+      if (stepId <= 3) state = "complete";
+      else if (stepId === 4) state = "active";
+    } else if (status === "under_review") {
       if (stepId === 1) state = "complete";
       else if (stepId === 2) state = "active";
     } else if (status === "rejected") {
@@ -71,6 +79,26 @@ function updateStatusBadge(status) {
 }
 
 function getContent(status, data) {
+  if (status === "pending_warzone")
+    return `
+    <div class="card-elevated status-card animate-fade-in" style="border-left: 4px solid #f59e0b;">
+      <div class="status-header">
+        <div class="status-icon" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b;">${icons.alertTriangleLarge}</div>
+        <div style="flex: 1;">
+          <h3 class="status-title">AI Warzone Audit Required</h3>
+          <p class="status-description">Admin has approved your startup details! However, you must now survive the AI Warzone interrogation before the pitch goes live.</p>
+        </div>
+      </div>
+      <div class="info-grid">
+        <div class="info-item"><p>Pitch Status</p><p>Awaiting Audit</p></div>
+        <div class="info-item"><p>Next Step</p><p>Complete interrogation</p></div>
+      </div>
+    </div>
+    <div class="button-group">
+      <a href="warzone.php?pitch_id=${data.pitch_id}" class="btn btn-primary">Start AI Warzone Audit now</a>
+    </div>
+  `;
+
   if (status === "approved")
     return `
     <div class="card-elevated status-card border-success animate-fade-in">

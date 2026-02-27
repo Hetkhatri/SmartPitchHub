@@ -144,8 +144,11 @@ if (!$pitch) {
                 
                 typingIndicator.style.display = 'none';
                 
-                if (data.success) {
-                    await addMessage(data.reply, 'ai');
+                    if (data.success) {
+                        if (data.ai_detected) {
+                            addMessage("🚨 [COUNTER-AI SCAN]: Automated response detected. Penalties applied. Defense efficacy reduced.", 'ai');
+                        }
+                        await addMessage(data.reply, 'ai');
                     
                     // Update HUD
                     if (data.score !== undefined) {

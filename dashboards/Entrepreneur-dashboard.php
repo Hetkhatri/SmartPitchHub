@@ -7,35 +7,60 @@ if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'entrepreneur') {
     header("Location: ../login.php");
     exit;
 }
-
 $user_id = $_SESSION['user_id'];
-$user_name = $_SESSION['username'] ?? 'Entrepreneur';
+$user_name = "Entrepreneur"; // Fallback
+
+// 1.5 KYC Detailed Check
+$kyc_record_exists = false;
+$kyc_detail_status = 'not_submitted';
+$kd_sql = "SELECT status FROM entrepreneur_kyc_details WHERE entrepreneur_id = ?";
+if ($kd_stmt = $conn->prepare($kd_sql)) {
+    $kd_stmt->bind_param("i", $user_id);
+    $kd_stmt->execute();
+    $kd_res = $kd_stmt->get_result()->fetch_assoc();
+    if ($kd_res) {
+        $kyc_record_exists = true;
+        $kyc_detail_status = $kd_res['status'];
+    }
+}
+
+// Logic for showing the global barrier popup
+// Show if: No record exists OR status is explicitly rejected
+$show_kyc_barrier = (!$kyc_record_exists || $kyc_detail_status === 'rejected');
 
 // --- 2. FETCH STATS ---
 // Initial defaults
 $stats = [
-    'raised' => 0, 'goal' => 0, 'valuation' => 0, 'equity' => 0, 'progress' => 0,
+    'raised' => 0, 'goal' => 0, 'valuation' => 0, 'progress' => 0,
     'investors' => 0, 'total_pitches' => 0, 'views' => 0, 
     'share_price' => 0, 'shares_issued' => 0, 'shares_remaining' => 0, 'total_shares' => 0,
     'latest_id' => 0, 'latest_title' => 'No Pitch Created', 'latest_tagline' => 'Create your first pitch to get started.',
     'status' => 'No Pitch', 'status_badge' => 'secondary',
     'kyc_status' => 'not_submitted',
-    'escrow_balance' => 0
+    'escrow_balance' => 0,
+    'expiry_date' => null,
+    'warzone_score' => 0
 ];
 
-// Fetch Entrepreneur Share Data & KYC Status
-$u_sql = "SELECT total_shares, available_shares, kyc_status FROM entrepreneurs WHERE id = ?";
+// Fetch Entrepreneur Name, Share Data & KYC Status
+$u_sql = "SELECT total_shares, available_shares, kyc_status, name 
+          FROM entrepreneurs 
+          WHERE id = ?";
 if ($stmt = $conn->prepare($u_sql)) {
     $stmt->bind_param("i", $user_id);
     $stmt->execute();
     $res = $stmt->get_result()->fetch_assoc();
     if ($res) {
+        $user_name = $res['name'];
         $stats['total_shares'] = $res['total_shares'];
-        // Note: shares_remaining is set to 0 by default. 
-        // We will only populate it if a pitch exists (Shares in Round)
-        // or we can use another variable for the global pool.
         $stats['pool_available'] = $res['available_shares']; 
-        $stats['kyc_status'] = $res['kyc_status'] ?? 'not_submitted';
+        
+        // Ensure kyc_status reflects true submission state
+        if (!$kyc_record_exists) {
+            $stats['kyc_status'] = 'not_submitted';
+        } else {
+            $stats['kyc_status'] = $res['kyc_status'] ?? 'not_submitted';
+        }
     }
 }
 
@@ -50,28 +75,47 @@ if ($stmt = $conn->prepare($p_sql)) {
         $stats['latest_title'] = $p_res['startup_name'];
         $stats['latest_tagline'] = $p_res['tagline'] ?? $p_res['description'];
         $stats['goal'] = $p_res['funding_goal'];
-        $stats['raised'] = $p_res['amount_raised'];
+        $stats['expiry_date'] = $p_res['expiry_date'];
+        $stats['warzone_score'] = $p_res['warzone_score'] ?? 0;
+        
+        // --- DYNAMIC AMOUNT RAISED ---
+        $raised_sql = "SELECT SUM(amount) as total FROM investments WHERE pitch_id = ? AND status = 'completed'";
+        $r_stmt = $conn->prepare($raised_sql);
+        $r_stmt->bind_param("i", $p_res['id']);
+        $r_stmt->execute();
+        $r_res = $r_stmt->get_result()->fetch_assoc();
+        $stats['raised'] = $r_res['total'] ?? 0;
+        
         $stats['views'] = $p_res['views'];
         $stats['share_price'] = $p_res['share_price'] ?? 0;
         $stats['shares_issued'] = $p_res['shares_issued'] ?? 0;
+        $stats['shares_sold'] = $p_res['shares_sold'] ?? 0;
 
         // Logic: Remaining In This Round = Shares Issued - Shares Sold
-        // Shares Sold = Amount Raised / Share Price
-        if ($stats['shares_issued'] > 0 && $stats['share_price'] > 0) {
-             $shares_sold = floor($stats['raised'] / $stats['share_price']);
-             $stats['shares_remaining'] = max(0, $stats['shares_issued'] - $shares_sold);
-        } else {
-             // If no shares issued in this pitch (how?), default to 0 for this metric
-             $stats['shares_remaining'] = 0;
-        }
+        $stats['shares_remaining'] = max(0, $stats['shares_issued'] - $stats['shares_sold']);
         
+        // Fetch Warzone Completion Status
+        $wz_check_sql = "SELECT id FROM warzone_sessions WHERE pitch_id = ? AND status = 'completed' LIMIT 1";
+        $wz_stmt = $conn->prepare($wz_check_sql);
+        $wz_stmt->bind_param("i", $p_res['id']);
+        $wz_stmt->execute();
+        $wz_res = $wz_stmt->get_result()->fetch_assoc();
+        $stats['warzone_completed'] = $wz_res ? true : false;
+
         // Pitch Status Logic
-        if ($p_res['is_approved']) {
+        if (($p_res['round_status'] ?? '') === 'completed') {
+            $stats['status'] = 'Finalized';
+            $stats['status_badge'] = 'secondary';
+        } elseif ($p_res['is_approved'] && $stats['warzone_completed']) {
             $stats['status'] = 'Live';
             $stats['status_badge'] = 'success';
+        } elseif ($p_res['is_approved'] && !$stats['warzone_completed']) {
+            $stats['status'] = 'Approved (Pending Warzone)';
+            $stats['status_badge'] = 'warning';
         } else {
-            $stats['status'] = ucfirst($p_res['status'] ?? 'Draft');
-            $stats['status_badge'] = ($stats['status'] === 'Pending') ? 'warning' : 'secondary';
+            // Default to pending if not approved and not completed
+            $stats['status'] = 'Pending';
+            $stats['status_badge'] = 'warning';
         }
         
         if ($stats['goal'] > 0) {
@@ -79,8 +123,8 @@ if ($stmt = $conn->prepare($p_sql)) {
         }
         if ($stats['total_shares'] > 0 && $stats['share_price'] > 0) {
             $stats['valuation'] = $stats['total_shares'] * $stats['share_price'];
-             // Equity Offered = (Shares Allocated to Investors / Total Shares) * 100
-             $stats['equity'] = ($stats['valuation'] > 0) ? ($stats['goal'] / $stats['valuation']) * 100 : 0;
+             // Share Analysis - No equity percentage logic
+             $stats['shares_issued_total'] = $p_res['shares_issued'] ?? 0;
         }
     }
 }
@@ -123,6 +167,87 @@ if ($stmt = $conn->prepare($wd_sql)) {
     $wd_res = $stmt->get_result()->fetch_assoc();
     $withdrawn_total = floatval($wd_res['total'] ?? 0);
 }
+
+// --- INVESTOR ENGAGEMENT STATS ---
+// 1. Total Interested (Saved Pitches)
+$stats['total_interested'] = 0;
+$int_sql = "SELECT COUNT(DISTINCT user_id) as count FROM saved_pitches WHERE pitch_id IN (SELECT id FROM pitches WHERE entrepreneur_id = ?)";
+if ($stmt = $conn->prepare($int_sql)) {
+    $stmt->bind_param("i", $user_id);
+    $stmt->execute();
+    $stats['total_interested'] = $stmt->get_result()->fetch_assoc()['count'] ?? 0;
+}
+
+// 2. New Investors This Week (Active ones)
+$stats['new_this_week'] = 0;
+$new_week_sql = "SELECT COUNT(DISTINCT investor_id) as count 
+                 FROM investments 
+                 WHERE pitch_id IN (SELECT id FROM pitches WHERE entrepreneur_id = ?) 
+                 AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+if ($stmt = $conn->prepare($new_week_sql)) {
+    $stmt->bind_param("i", $user_id);
+    $stmt->execute();
+    $stats['new_this_week'] = $stmt->get_result()->fetch_assoc()['count'] ?? 0;
+}
+
+// 3. Recent Investors List
+$recent_investors = [];
+$recent_inv_sql = "SELECT i.name, inv.amount, inv.created_at, i.email
+                   FROM investments inv
+                   JOIN investors i ON inv.investor_id = i.id
+                   JOIN pitches p ON inv.pitch_id = p.id
+                   WHERE p.entrepreneur_id = ?
+                   ORDER BY inv.created_at DESC
+                   LIMIT 5";
+if ($stmt = $conn->prepare($recent_inv_sql)) {
+    $stmt->bind_param("i", $user_id);
+    $stmt->execute();
+    $res_inv = $stmt->get_result();
+    while ($row = $res_inv->fetch_assoc()) {
+        $recent_investors[] = $row;
+    }
+}
+
+// 4. Activity Feed Logic (Unified Timeline)
+$activity_feed = [];
+
+// Add Investments to Activity
+foreach($recent_investors as $inv) {
+    $activity_feed[] = [
+        'type' => 'investment',
+        'title' => 'New Investment Received',
+        'desc' => htmlspecialchars($inv['name']) . ' invested ' . money($inv['amount']),
+        'time' => $inv['created_at'],
+        'icon_type' => 'success'
+    ];
+}
+
+// Add Interested Investors (Saves)
+$saves_sql = "SELECT i.name, s.saved_at 
+              FROM saved_pitches s 
+              JOIN investors i ON s.user_id = i.id 
+              WHERE s.pitch_id IN (SELECT id FROM pitches WHERE entrepreneur_id = ?)
+              ORDER BY s.saved_at DESC LIMIT 5";
+if ($stmt = $conn->prepare($saves_sql)) {
+    $stmt->bind_param("i", $user_id);
+    $stmt->execute();
+    $res_saves = $stmt->get_result();
+    while ($row = $res_saves->fetch_assoc()) {
+        $activity_feed[] = [
+            'type' => 'interest',
+            'title' => 'Project Interested',
+            'desc' => htmlspecialchars($row['name']) . ' saved your pitch to their watchlist',
+            'time' => $row['saved_at'],
+            'icon_type' => 'primary'
+        ];
+    }
+}
+
+// Sort activity feed by time descending
+usort($activity_feed, function($a, $b) {
+    return strtotime($b['time']) - strtotime($a['time']);
+});
+$activity_feed = array_slice($activity_feed, 0, 10);
 
 // Fetch Transaction History (Last 10)
 $wallet_txns = [];
@@ -344,6 +469,15 @@ function money($amount) {
       }
       .nav-item.logout {
         color: var(--destructive);
+      }
+      .locked-item {
+        opacity: 0.6;
+        cursor: not-allowed !important;
+        position: relative;
+      }
+      .nav-item.locked-item:hover {
+        background: transparent;
+        color: var(--muted-foreground);
       }
       .upgrade-card {
         margin: 0.75rem;
@@ -1689,32 +1823,35 @@ function money($amount) {
             </svg>
             <span>Dashboard</span>
           </button>
-          <button class="nav-item" data-item="pitch">
+          
+          <?php $is_kyc_approved = (isset($stats['kyc_status']) && $stats['kyc_status'] === 'verified'); ?>
+          
+          <button class="nav-item <?php echo !$is_kyc_approved ? 'locked-item' : ''; ?>" 
+                  <?php echo $is_kyc_approved ? 'data-item="pitch"' : 'onclick="alert(\'Verification Required: Please complete your KYC to unlock pitch management.\')"'; ?>>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
-            <span>My Pitch</span>
+            <span>My Pitch <?php if(!$is_kyc_approved) echo '🔒'; ?></span>
           </button>
-          <button class="nav-item" data-item="investors">
+
+          <button class="nav-item <?php echo !$is_kyc_approved ? 'locked-item' : ''; ?>" 
+                  <?php echo $is_kyc_approved ? 'data-item="investors"' : 'onclick="alert(\'Verification Required: Complete KYC to see investor details.\')"'; ?>>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
             </svg>
-            <span>Investors</span>
+            <span>Investors <?php if(!$is_kyc_approved) echo '🔒'; ?></span>
           </button>
-          <button class="nav-item" data-item="wallet">
+
+          <button class="nav-item <?php echo !$is_kyc_approved ? 'locked-item' : ''; ?>" 
+                  <?php echo $is_kyc_approved ? 'data-item="wallet"' : 'onclick="alert(\'Verification Required: Complete KYC to unlock your wallet.\')"'; ?>>
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
             </svg>
-            <span>Wallet</span>
+            <span>Wallet <?php if(!$is_kyc_approved) echo '🔒'; ?></span>
           </button>
-          <button class="nav-item" data-item="pay-investors">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-               <!-- Piggy bank or card icon -->
-              <path stroke-linecap="round" stroke-linejoin="round" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
-            </svg>
-            <span>Pay Investors</span>
-          </button>
-          <button class="nav-item" onclick="window.location.href='../KYC/kyc-review.php'">
+          
+          <?php $review_link = ($kyc_record_exists) ? '../KYC/kyc-review.php' : '../KYC/Enterpreneur-kyc.php'; ?>
+          <button class="nav-item" onclick="window.location.href='<?php echo $review_link; ?>'">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
@@ -1772,15 +1909,45 @@ function money($amount) {
           </button>
         </div>
 
-        <div class="upgrade-card" style="background: hsla(142, 76%, 36%, 0.1); border: 1px solid hsla(142, 76%, 36%, 0.2);">
+        <?php
+        // Use the detailed KYC status which checks for record existence
+        $kyc_status = $kyc_detail_status ?? 'not_submitted';
+        $kyc_label = 'KYC Not Submitted';
+        $kyc_desc = 'Please complete your KYC.';
+        $kyc_color_hsl = '230, 20%, 18%'; // Grey-ish
+        $kyc_text_color = 'var(--muted-foreground)';
+        $kyc_icon = '<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />';
+
+        if ($kyc_status === 'verified' || $kyc_status === 'approved') {
+            $kyc_label = 'KYC Verified';
+            $kyc_desc = 'You have full access.';
+            $kyc_color_hsl = '142, 76%, 36%'; // Green
+            $kyc_text_color = 'var(--success)';
+            $kyc_icon = '<path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />';
+        } elseif ($kyc_status === 'pending' || $kyc_status === 'under_review') {
+            $kyc_label = 'KYC Under Review';
+            $kyc_desc = 'Verification in progress.';
+            $kyc_color_hsl = '38, 92%, 50%'; // Yellow
+            $kyc_text_color = 'var(--warning)';
+            $kyc_icon = '<path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />';
+        } elseif ($kyc_status === 'rejected') {
+            $kyc_label = 'KYC Rejected';
+            $kyc_desc = 'Please resubmit details.';
+            $kyc_color_hsl = '0, 72%, 51%'; // Red
+            $kyc_text_color = 'var(--destructive)';
+            $kyc_icon = '<path stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />';
+        }
+        ?>
+
+        <div class="upgrade-card" style="background: hsla(<?php echo $kyc_color_hsl; ?>, 0.1); border: 1px solid hsla(<?php echo $kyc_color_hsl; ?>, 0.2);">
           <div class="upgrade-header">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="color: var(--success);">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="color: <?php echo $kyc_text_color; ?>;">
+              <?php echo $kyc_icon; ?>
             </svg>
-            <span style="color: var(--success);">KYC Verified</span>
+            <span style="color: <?php echo $kyc_text_color; ?>;"><?php echo $kyc_label; ?></span>
           </div>
-          <p style="color: var(--muted-foreground);">You have full access.</p>
-          <button class="upgrade-btn" style="background: transparent; border: 1px solid var(--success); color: var(--success);" onclick="window.location.href='../KYC/Enterpreneur-kyc.php'">View Details</button>
+          <p style="color: var(--muted-foreground);"><?php echo $kyc_desc; ?></p>
+          <button class="upgrade-btn" style="background: transparent; border: 1px solid <?php echo $kyc_text_color; ?>; color: <?php echo $kyc_text_color; ?>;" onclick="window.location.href='../KYC/Enterpreneur-kyc.php'">View Details</button>
         </div>
       </aside>
 
@@ -1866,6 +2033,24 @@ function money($amount) {
         </header>
 
         <main class="dashboard-content">
+          <!-- ⚠️ AI WARZONE ALERT -->
+          <?php if ($stats['latest_id'] > 0 && !$stats['warzone_completed']): ?>
+          <div class="animate-fade-in" style="margin: 1.5rem 1.5rem 0 1.5rem;">
+            <div style="background: hsla(38, 92%, 50%, 0.1); border: 1px solid hsla(38, 92%, 50%, 0.2); border-radius: var(--radius); padding: 1.25rem; display: flex; align-items: center; gap: 1rem; color: #f59e0b;">
+              <div style="background: hsla(38, 92%, 50%, 0.1); padding: 0.75rem; border-radius: 12px;">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width: 24px; height: 24px;">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              </div>
+              <div style="flex: 1;">
+                <h4 style="font-weight: 700; margin-bottom: 0.25rem; color: var(--foreground);">AI Warzone Audit Remaining</h4>
+                <p style="font-size: 0.875rem; color: var(--muted-foreground);">Your pitch for <strong><?php echo htmlspecialchars($stats['latest_title']); ?></strong> is submitted, but the AI Warzone audit is still pending. Your pitch will NOT go live until the audit is complete.</p>
+              </div>
+              <button onclick="window.location.href='../Pitches/warzone.php?pitch_id=<?php echo $stats['latest_id']; ?>'" style="background: var(--gradient-primary); color: var(--primary-foreground); padding: 0.625rem 1.25rem; border-radius: var(--radius); border: none; font-weight: 600; cursor: pointer; transition: transform 0.2s ease;">Start Audit Now</button>
+            </div>
+          </div>
+          <?php endif; ?>
+
           <div id="view-dashboard" class="dashboard-view active">
             <section class="animate-fade-in">
               <h2 class="section-title">Overview</h2>
@@ -1960,35 +2145,6 @@ function money($amount) {
                     </div>
                 </div>
 
-                <!-- 6. Share Capital Overview -->
-                <div class="metric-card">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
-                        <div class="kpi-icon">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
-                            </svg>
-                        </div>
-                        <span style="font-size: 0.7rem; color: var(--muted-foreground);">Valuation: <span style="color: var(--primary);"><?php echo money($stats['valuation']); ?></span></span>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 0.5rem; color: var(--muted-foreground);">
-                        <span>Share Price:</span>
-                        <span style="color: var(--foreground); font-weight: 600;"><?php echo money($stats['share_price']); ?></span>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 0.5rem; color: var(--muted-foreground);">
-                        <span>Shares Issued:</span>
-                        <span style="color: var(--foreground); font-weight: 600;"><?php echo number_format($stats['shares_issued']); ?></span>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 1rem; color: var(--muted-foreground);">
-                        <span><?php echo ($stats['latest_id'] > 0) ? 'Remaining in Round:' : 'Unallocated Pool:'; ?></span>
-                        <span style="color: #10b981; font-weight: 600;"><?php echo number_format($stats['shares_remaining']); ?></span>
-                    </div>
-                    <div style="font-size: 0.75rem; color: var(--muted-foreground); margin-bottom: 0.5rem;">Share Capital Overview</div>
-                    <div style="background: hsla(38, 92%, 50%, 0.1); border: 1px solid hsla(38, 92%, 50%, 0.2); padding: 0.5rem; border-radius: 4px; font-size: 0.65rem; color: #f59e0b; line-height: 1.2;">
-                         Note: Final share structure and pricing are subject to final audit and approval by the administrative team during the review process.
-                    </div>
-                </div>
-
                 <!-- 7. Active Investors -->
                 <div class="metric-card">
                     <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
@@ -2079,6 +2235,7 @@ function money($amount) {
                   <h3>Upload Documents</h3>
                   <p>Add financial docs or presentations</p>
                 </div>
+                <?php if ($stats['latest_id'] > 0): ?>
                 <div
                   class="metric-card quick-action-card"
                   onclick="window.location.href='../Pitches/view-pitch.php?id=<?php echo $stats['latest_id']; ?>'"
@@ -2101,6 +2258,30 @@ function money($amount) {
                   <h3>View Public Pitch</h3>
                   <p>See how investors view your pitch</p>
                 </div>
+                <?php else: ?>
+                <div
+                  class="metric-card quick-action-card"
+                  onclick="window.location.href='../Pitches/createPitch.php'"
+                >
+                  <div class="quick-action-icon primary">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M12 4v16m8-8H4"
+                      />
+                    </svg>
+                  </div>
+                  <h3>Create Your Pitch</h3>
+                  <p>Launch your startup to investors</p>
+                </div>
+                <?php endif; ?>
                 <div class="metric-card quick-action-card">
                   <div class="quick-action-icon default">
                     <svg
@@ -2138,7 +2319,6 @@ function money($amount) {
                                 <tr style="background: hsla(230, 12%, 18%, 0.3);">
                                     <th style="text-align: left; padding: 1rem; color: var(--muted-foreground); font-weight: 500; font-size: 0.875rem;">Investor</th>
                                     <th style="text-align: left; padding: 1rem; color: var(--muted-foreground); font-weight: 500; font-size: 0.875rem;">Amount</th>
-                                    <th style="text-align: left; padding: 1rem; color: var(--muted-foreground); font-weight: 500; font-size: 0.875rem;">Equity</th>
                                     <th style="text-align: left; padding: 1rem; color: var(--muted-foreground); font-weight: 500; font-size: 0.875rem;">Date</th>
                                     <th style="text-align: left; padding: 1rem; color: var(--muted-foreground); font-weight: 500; font-size: 0.875rem;">Status</th>
                                 </tr>
@@ -2146,7 +2326,7 @@ function money($amount) {
                             <tbody>
                                 <?php if(empty($recent_investments)): ?>
                                     <tr>
-                                        <td colspan="5" style="padding: 2rem; text-align: center; color: var(--muted-foreground);">No investments received yet.</td>
+                                        <td colspan="4" style="padding: 2rem; text-align: center; color: var(--muted-foreground);">No investments received yet.</td>
                                     </tr>
                                 <?php else: ?>
                                     <?php foreach($recent_investments as $inv): ?>
@@ -2164,13 +2344,6 @@ function money($amount) {
                                         </td>
                                         <td style="padding: 1rem; font-weight: 600; color: var(--foreground); font-family: 'Space Grotesk', sans-serif;">
                                             <?php echo money($inv['amount']); ?>
-                                        </td>
-                                        <td style="padding: 1rem; color: var(--muted-foreground); font-size: 0.875rem;">
-                                            <?php 
-                                                 // Calculate equity based on valuation at that time? Roughly estimate for now
-                                                 $eq = ($stats['valuation'] > 0) ? ($inv['amount'] / $stats['valuation']) * 100 : 0;
-                                                 echo number_format($eq, 4) . '%';
-                                            ?>
                                         </td>
                                         <td style="padding: 1rem; color: var(--muted-foreground); font-size: 0.875rem;"><?php echo date('M j, Y', strtotime($inv['created_at'])); ?></td>
                                         <td style="padding: 1rem;">
@@ -2216,6 +2389,10 @@ function money($amount) {
                       <div class="pitch-badges">
                         <span class="kpi-badge <?php echo $stats['status_badge']; ?>"><?php echo $stats['status']; ?></span>
                         <span class="kpi-badge primary">Round: <?php echo ($stats['shares_issued'] > 0) ? 'Active' : 'Preparation'; ?></span>
+                        <span class="kpi-badge" style="background: linear-gradient(135deg, #8b5cf6 0%, #d946ef 100%); color: white; border: none; display: inline-flex; align-items: center; gap: 4px;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                            Warzone Score: <?php echo $stats['warzone_score']; ?>%
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -2271,36 +2448,27 @@ function money($amount) {
                           <path
                             stroke-linecap="round"
                             stroke-linejoin="round"
-                            d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z"
-                          />
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"
+                            d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
                           />
                         </svg>
-                        Equity
+                        Round Ends
                       </div>
-                      <div class="value"><?php echo number_format($stats['equity'], 1); ?>%</div>
-                    </div>
-                    <div class="stat-box">
-                      <div class="label">
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                          stroke-width="2"
-                        >
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                          />
-                        </svg>
-                        Status
+                      <div class="value" id="round-countdown">
+                        <?php 
+                          if ($stats['expiry_date']) {
+                              $now = new DateTime();
+                              $expiry = new DateTime($stats['expiry_date']);
+                              if ($expiry > $now) {
+                                  $diff = $now->diff($expiry);
+                                  echo $diff->format('%a Days Left');
+                              } else {
+                                  echo "Round Ended";
+                              }
+                          } else {
+                              echo "--";
+                          }
+                        ?>
                       </div>
-                      <div class="value <?php echo $stats['status_badge']; ?>"><?php echo $stats['status']; ?></div>
                     </div>
                   </div>
                 </div>
@@ -2327,7 +2495,8 @@ function money($amount) {
                     metrics are impressive. Consider adding more details about
                     your go-to-market strategy for Q2."
                   </p>
-                  <div class="feedback-meta">Last updated: 2 days ago</div>
+                  <div class="feedback-meta">Last updated: Recently</div>
+                  <?php if ($stats['latest_id'] > 0): ?>
                   <button class="view-pitch-btn" onclick="window.location.href='../Pitches/view-pitch.php?id=<?php echo $stats['latest_id']; ?>'">
                     <svg
                       xmlns="http://www.w3.org/2000/svg"
@@ -2344,6 +2513,11 @@ function money($amount) {
                     </svg>
                     View Public Pitch
                   </button>
+                  <?php else: ?>
+                  <button class="view-pitch-btn" onclick="window.location.href='../Pitches/createPitch.php'">
+                    Launch New Pitch
+                  </button>
+                  <?php endif; ?>
                 </div>
               </div>
             </section>
@@ -2668,7 +2842,7 @@ function money($amount) {
                         </div>
                         <div class="engagement-stat-info">
                           <div class="label">Interested Investors</div>
-                          <div class="value">124</div>
+                          <div class="value"><?php echo number_format($stats['total_interested']); ?></div>
                         </div>
                       </div>
                       <div class="engagement-trend">
@@ -2685,7 +2859,7 @@ function money($amount) {
                             d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
                           />
                         </svg>
-                        +18
+                        +<?php echo $stats['total_interested'] > 0 ? rand(1, 5) : 0; ?>
                       </div>
                     </div>
                     <div class="engagement-stat">
@@ -2707,7 +2881,7 @@ function money($amount) {
                         </div>
                         <div class="engagement-stat-info">
                           <div class="label">Active Investors</div>
-                          <div class="value">47</div>
+                          <div class="value"><?php echo number_format($stats['investors']); ?></div>
                         </div>
                       </div>
                       <div class="engagement-trend">
@@ -2724,7 +2898,7 @@ function money($amount) {
                             d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
                           />
                         </svg>
-                        +5
+                        +<?php echo $stats['investors'] > 0 ? rand(1, 2) : 0; ?>
                       </div>
                     </div>
                     <div class="engagement-stat">
@@ -2746,7 +2920,7 @@ function money($amount) {
                         </div>
                         <div class="engagement-stat-info">
                           <div class="label">New This Week</div>
-                          <div class="value">12</div>
+                          <div class="value"><?php echo number_format($stats['new_this_week']); ?></div>
                         </div>
                       </div>
                       <div class="engagement-trend">
@@ -2763,7 +2937,7 @@ function money($amount) {
                             d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
                           />
                         </svg>
-                        +3
+                        +<?php echo $stats['new_this_week']; ?>
                       </div>
                     </div>
                   </div>
@@ -2780,64 +2954,38 @@ function money($amount) {
                     Recent Investors
                   </h3>
                   <div class="investor-list">
-                    <div class="investor-item">
-                      <div class="investor-left">
-                        <img
-                          src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&h=100&fit=crop&crop=face"
-                          alt="Sarah Mitchell"
-                          class="investor-avatar"
-                        />
-                        <div>
-                          <div class="investor-name">Sarah Mitchell</div>
-                          <div class="investor-time">2 hours ago</div>
-                        </div>
+                    <?php if (empty($recent_investors)): ?>
+                      <div style="text-align: center; padding: 2rem; color: var(--muted-foreground);">
+                        No investors yet.
                       </div>
-                      <div class="investor-amount">$150,000</div>
-                    </div>
-                    <div class="investor-item">
-                      <div class="investor-left">
-                        <img
-                          src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop&crop=face"
-                          alt="James Wilson"
-                          class="investor-avatar"
-                        />
-                        <div>
-                          <div class="investor-name">James Wilson</div>
-                          <div class="investor-time">5 hours ago</div>
+                    <?php else: ?>
+                      <?php foreach ($recent_investors as $inv): ?>
+                        <div class="investor-item">
+                          <div class="investor-left">
+                            <img
+                              src="https://ui-avatars.com/api/?name=<?php echo urlencode($inv['name']); ?>&background=random"
+                              alt="<?php echo htmlspecialchars($inv['name']); ?>"
+                              class="investor-avatar"
+                            />
+                            <div>
+                              <div class="investor-name"><?php echo htmlspecialchars($inv['name']); ?></div>
+                              <div class="investor-time">
+                                <?php 
+                                  $time = strtotime($inv['created_at']);
+                                  $diff = time() - $time;
+                                  if ($diff < 3600) echo floor($diff/60) . " mins ago";
+                                  else if ($diff < 86400) echo floor($diff/3600) . " hours ago";
+                                  else echo floor($diff/86400) . " days ago";
+                                ?>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="investor-amount">₹<?php echo number_format($inv['amount']); ?></div>
                         </div>
-                      </div>
-                      <div class="investor-amount">$75,000</div>
-                    </div>
-                    <div class="investor-item">
-                      <div class="investor-left">
-                        <img
-                          src="https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=100&h=100&fit=crop&crop=face"
-                          alt="Emily Chen"
-                          class="investor-avatar"
-                        />
-                        <div>
-                          <div class="investor-name">Emily Chen</div>
-                          <div class="investor-time">1 day ago</div>
-                        </div>
-                      </div>
-                      <div class="investor-amount">$200,000</div>
-                    </div>
-                    <div class="investor-item">
-                      <div class="investor-left">
-                        <img
-                          src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=face"
-                          alt="Michael Brown"
-                          class="investor-avatar"
-                        />
-                        <div>
-                          <div class="investor-name">Michael Brown</div>
-                          <div class="investor-time">2 days ago</div>
-                        </div>
-                      </div>
-                      <div class="investor-amount">$100,000</div>
-                    </div>
+                      <?php endforeach; ?>
+                    <?php endif; ?>
                   </div>
-                  <button class="view-all-btn">View All Investors</button>
+                  <button class="view-all-btn">View All Engagement</button>
                 </div>
               </div>
             </section>
@@ -2881,7 +3029,13 @@ function money($amount) {
                             <span style="opacity: 0.9;">In Smart Escrow</span>
                         </div>
                         <div class="value" style="font-size: 1.5rem;"><?php echo money($stats['escrow_balance']); ?></div>
-                        <div class="updated" style="font-size: 0.75rem;">Funds locked until milestones are met</div>
+                        <div class="updated" style="font-size: 0.75rem;">Funds locked until milestone/goal reached</div>
+                        
+                        <?php if ($stats['escrow_balance'] > 0 && $stats['status'] === 'Live'): ?>
+                        <button class="primary-btn btn-full" style="margin-top: 1rem; background: var(--success); border-color: var(--success);" onclick="finalizeRound(<?php echo $stats['latest_id']; ?>)">
+                            Finalize Round & Claim
+                        </button>
+                        <?php endif; ?>
                     </div>
                   </div>
 
@@ -2942,15 +3096,13 @@ function money($amount) {
                         viewBox="0 0 24 24"
                         stroke="currentColor"
                         stroke-width="2"
+                        style="width: 16px; height: 16px; margin-right: 8px;"
                       >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          d="M5 10l7-7m0 0l7 7m-7-7v18"
-                        />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 13l-3 3m0 0l-3-3m3 3V8m0 13a9 9 0 110-18 9 9 0 010 18z" />
                       </svg>
                       Withdraw Funds
                     </button>
+                  </div>
                     <div class="razorpay-note">
                       <div class="razorpay-header">
                         <svg
@@ -3038,467 +3190,49 @@ function money($amount) {
             </section>
           </div>
 
-          <div id="view-pay-investors" class="dashboard-view">
-            <section class="pay-investors-section animate-fade-in delay-600">
-              <h2 class="section-title">Pay Investors</h2>
-              <div class="metric-card">
-                <div class="table-container">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Investor</th>
-                        <th>Invested Amount</th>
-                        <th>Equity %</th>
-                        <th>Return Amount</th>
-                        <th>Status</th>
-                        <th style="text-align: right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td>
-                          <div class="table-investor">
-                            <img
-                              src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&h=100&fit=crop&crop=face"
-                              alt="Sarah Mitchell"
-                              class="table-avatar"
-                            />
-                            <span class="table-name">Sarah Mitchell</span>
-                          </div>
-                        </td>
-                        <td class="table-amount">$150,000</td>
-                        <td class="table-equity">1.5%</td>
-                        <td class="table-return">$22,500</td>
-                        <td>
-                          <span class="status-badge pending">
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              stroke-width="2"
-                            >
-                              <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                              />
-                            </svg>
-                            Pending
-                          </span>
-                        </td>
-                        <td style="text-align: right">
-                          <button class="pay-btn">
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              stroke-width="2"
-                            >
-                              <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                              />
-                            </svg>
-                            Pay Now
-                          </button>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td>
-                          <div class="table-investor">
-                            <img
-                              src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop&crop=face"
-                              alt="James Wilson"
-                              class="table-avatar"
-                            />
-                            <span class="table-name">James Wilson</span>
-                          </div>
-                        </td>
-                        <td class="table-amount">$75,000</td>
-                        <td class="table-equity">0.75%</td>
-                        <td class="table-return">$11,250</td>
-                        <td>
-                          <span class="status-badge paid">
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              stroke-width="2"
-                            >
-                              <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                              />
-                            </svg>
-                            Paid
-                          </span>
-                        </td>
-                        <td style="text-align: right">
-                          <button class="pay-btn" disabled>
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              stroke-width="2"
-                            >
-                              <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                              />
-                            </svg>
-                            Pay Now
-                          </button>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td>
-                          <div class="table-investor">
-                            <img
-                              src="https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=100&h=100&fit=crop&crop=face"
-                              alt="Emily Chen"
-                              class="table-avatar"
-                            />
-                            <span class="table-name">Emily Chen</span>
-                          </div>
-                        </td>
-                        <td class="table-amount">$200,000</td>
-                        <td class="table-equity">2.0%</td>
-                        <td class="table-return">$30,000</td>
-                        <td>
-                          <span class="status-badge pending">
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              stroke-width="2"
-                            >
-                              <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                              />
-                            </svg>
-                            Pending
-                          </span>
-                        </td>
-                        <td style="text-align: right">
-                          <button class="pay-btn">
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              stroke-width="2"
-                            >
-                              <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                              />
-                            </svg>
-                            Pay Now
-                          </button>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td>
-                          <div class="table-investor">
-                            <img
-                              src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=face"
-                              alt="Michael Brown"
-                              class="table-avatar"
-                            />
-                            <span class="table-name">Michael Brown</span>
-                          </div>
-                        </td>
-                        <td class="table-amount">$100,000</td>
-                        <td class="table-equity">1.0%</td>
-                        <td class="table-return">$15,000</td>
-                        <td>
-                          <span class="status-badge processing">
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              stroke-width="2"
-                            >
-                              <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                              />
-                            </svg>
-                            Processing
-                          </span>
-                        </td>
-                        <td style="text-align: right">
-                          <button class="pay-btn" disabled>
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              stroke-width="2"
-                            >
-                              <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                              />
-                            </svg>
-                            Pay Now
-                          </button>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td>
-                          <div class="table-investor">
-                            <img
-                              src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=face"
-                              alt="Lisa Anderson"
-                              class="table-avatar"
-                            />
-                            <span class="table-name">Lisa Anderson</span>
-                          </div>
-                        </td>
-                        <td class="table-amount">$50,000</td>
-                        <td class="table-equity">0.5%</td>
-                        <td class="table-return">$7,500</td>
-                        <td>
-                          <span class="status-badge failed">
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              stroke-width="2"
-                            >
-                              <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
-                              />
-                            </svg>
-                            Failed
-                          </span>
-                        </td>
-                        <td style="text-align: right">
-                          <button class="pay-btn" disabled>
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              stroke-width="2"
-                            >
-                              <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                              />
-                            </svg>
-                            Pay Now
-                          </button>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </section>
-          </div>
-
           <div id="view-transactions" class="dashboard-view">
             <section class="activity-section animate-fade-in delay-700">
               <h2 class="section-title">Recent Activity</h2>
               <div class="metric-card">
                 <div class="timeline">
-                  <div class="timeline-item">
-                    <div class="timeline-icon success">
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                        />
-                      </svg>
+                  <?php if (empty($activity_feed)): ?>
+                    <div style="text-align: center; padding: 2rem; color: var(--muted-foreground);">
+                      No recent activity to show.
                     </div>
-                    <div class="timeline-content">
-                      <div class="timeline-header">
-                        <div>
-                          <div class="timeline-title">
-                            New Investment Received
-                          </div>
-                          <div class="timeline-desc">
-                            Sarah Mitchell invested $150,000
+                  <?php else: ?>
+                    <?php foreach ($activity_feed as $item): ?>
+                      <div class="timeline-item">
+                        <div class="timeline-icon <?php echo $item['icon_type']; ?>">
+                          <?php if ($item['type'] === 'investment'): ?>
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          <?php else: ?>
+                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                            </svg>
+                          <?php endif; ?>
+                        </div>
+                        <div class="timeline-content">
+                          <div class="timeline-header">
+                            <div>
+                              <div class="timeline-title"><?php echo htmlspecialchars($item['title']); ?></div>
+                              <div class="timeline-desc"><?php echo $item['desc']; ?></div>
+                            </div>
+                            <div class="timeline-time">
+                                <?php 
+                                    $time = strtotime($item['time']);
+                                    $diff = time() - $time;
+                                    if ($diff < 3600) echo max(1, floor($diff/60)) . " mins ago";
+                                    else if ($diff < 86400) echo floor($diff/3600) . " hours ago";
+                                    else echo floor($diff/86400) . " days ago";
+                                ?>
+                            </div>
                           </div>
                         </div>
-                        <div class="timeline-time">2 hours ago</div>
                       </div>
-                    </div>
-                  </div>
-
-                  <div class="timeline-item">
-                    <div class="timeline-icon primary">
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"
-                        />
-                      </svg>
-                    </div>
-                    <div class="timeline-content">
-                      <div class="timeline-header">
-                        <div>
-                          <div class="timeline-title">
-                            New Interested Investor
-                          </div>
-                          <div class="timeline-desc">
-                            David Park showed interest in your pitch
-                          </div>
-                        </div>
-                        <div class="timeline-time">4 hours ago</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="timeline-item">
-                    <div class="timeline-icon warning">
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                        />
-                      </svg>
-                    </div>
-                    <div class="timeline-content">
-                      <div class="timeline-header">
-                        <div>
-                          <div class="timeline-title">Pitch Updated</div>
-                          <div class="timeline-desc">
-                            Your pitch deck was updated successfully
-                          </div>
-                        </div>
-                        <div class="timeline-time">6 hours ago</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="timeline-item">
-                    <div class="timeline-icon success">
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                        />
-                      </svg>
-                    </div>
-                    <div class="timeline-content">
-                      <div class="timeline-header">
-                        <div>
-                          <div class="timeline-title">Document Approved</div>
-                          <div class="timeline-desc">
-                            Financial projections document approved
-                          </div>
-                        </div>
-                        <div class="timeline-time">1 day ago</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="timeline-item">
-                    <div class="timeline-icon primary">
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                        />
-                      </svg>
-                    </div>
-                    <div class="timeline-content">
-                      <div class="timeline-header">
-                        <div>
-                          <div class="timeline-title">Admin Message</div>
-                          <div class="timeline-desc">
-                            New feedback on your pitch from admin
-                          </div>
-                        </div>
-                        <div class="timeline-time">1 day ago</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="timeline-item">
-                    <div class="timeline-icon muted">
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
-                        />
-                      </svg>
-                    </div>
-                    <div class="timeline-content">
-                      <div class="timeline-header">
-                        <div>
-                          <div class="timeline-title">Profile Views</div>
-                          <div class="timeline-desc">
-                            Your pitch was viewed 47 times this week
-                          </div>
-                        </div>
-                        <div class="timeline-time">2 days ago</div>
-                      </div>
-                    </div>
-                  </div>
+                    <?php endforeach; ?>
+                  <?php endif; ?>
                 </div>
                 <button class="view-all-btn" style="margin-top: 1.5rem">
                   View All Activity
@@ -3727,6 +3461,31 @@ function money($amount) {
           }
       }
 
+      async function finalizeRound(pitchId) {
+          if (!confirm("Are you sure you want to finalize this round? This will release all escrowed funds to your wallet and unlock shares for your investors. This action cannot be undone.")) return;
+
+          try {
+              const formData = new FormData();
+              formData.append('pitch_id', pitchId);
+
+              const response = await fetch('api_finalize_round.php', {
+                  method: 'POST',
+                  body: formData
+              });
+              const result = await response.json();
+
+              if (result.success) {
+                  showToast(result.message, 'success');
+                  setTimeout(() => location.reload(), 2000);
+              } else {
+                  showToast(result.message, 'error');
+              }
+          } catch (error) {
+              console.error('Error:', error);
+              showToast('Something went wrong with the transaction.', 'error');
+          }
+      }
+
       // Theme Toggle
       let isDark = true;
       const sunIcon = document.getElementById("sunIcon");
@@ -3781,6 +3540,142 @@ function money($amount) {
           }
         });
       });
+
+      // Countdown Timer Logic
+      const expiryDate = "<?php echo $stats['expiry_date']; ?>";
+      if (expiryDate) {
+        const countdownEl = document.getElementById('round-countdown');
+        function updateCountdown() {
+          const now = new Date().getTime();
+          const target = new Date(expiryDate).getTime();
+          const diff = target - now;
+
+          if (diff <= 0) {
+            countdownEl.innerHTML = "Round Ended";
+            return;
+          }
+
+          const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+          const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+          const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+          const secs = Math.floor((diff % (1000 * 60)) / 1000);
+
+          let output = "";
+          if (days > 0) output += days + "d ";
+          output += hours + "h " + mins + "m " + secs + "s";
+          countdownEl.innerHTML = output;
+        }
+        setInterval(updateCountdown, 1000);
+        updateCountdown();
+      }
     </script>
+
+<?php if ($show_kyc_barrier): ?>
+<div class="kyc-overlay-global">
+    <div class="kyc-modal-global">
+        <div class="kyc-icon-global">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+        </div>
+        <h2 class="kyc-title-global">Identity Verification Required</h2>
+        <p class="kyc-desc-global">
+            <?php if(isset($kyc_detail_status) && $kyc_detail_status === 'rejected'): ?>
+                <span style="color: #ef4444; font-weight: 600;">Your previous KYC was rejected.</span> Please update your documents to proceed with fundraising and pitch management.
+            <?php else: ?>
+                To ensure a secure environment for our investors, all entrepreneurs must complete their KYC verification before creating pitches or receiving funds.
+            <?php endif; ?>
+        </p>
+        <div class="kyc-actions-global">
+            <a href="../KYC/Enterpreneur-kyc.php" class="kyc-btn-primary">Complete KYC Now</a>
+            <button onclick="this.closest('.kyc-overlay-global').style.display='none'" class="kyc-btn-secondary">Skip for now</button>
+            <p class="kyc-footer-global">Note: Fundraising features will remain locked</p>
+        </div>
+    </div>
+</div>
+
+<style>
+.kyc-btn-secondary {
+    display: block;
+    width: 100%;
+    background: transparent;
+    color: #94a3b8;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 12px 24px;
+    border-radius: 12px;
+    font-weight: 600;
+    margin-top: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+.kyc-btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: #fff;
+}
+.kyc-overlay-global {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(10, 11, 20, 0.9);
+    backdrop-filter: blur(10px);
+    z-index: 99999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.kyc-modal-global {
+    background: #1a1b2e;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 24px;
+    padding: 40px;
+    max-width: 450px;
+    width: 100%;
+    text-align: center;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+}
+.kyc-icon-global {
+    width: 64px; height: 64px;
+    background: rgba(99, 102, 241, 0.1);
+    color: #6366f1;
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 24px;
+}
+.kyc-icon-global svg { width: 32px; height: 32px; }
+.kyc-title-global {
+    color: #fff;
+    font-size: 1.5rem;
+    margin-bottom: 12px;
+    font-weight: 700;
+}
+.kyc-desc-global {
+    color: #94a3b8;
+    line-height: 1.6;
+    margin-bottom: 32px;
+}
+.kyc-btn-primary {
+    display: block;
+    background: #6366f1;
+    color: #fff;
+    text-decoration: none;
+    padding: 14px 24px;
+    border-radius: 12px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+.kyc-btn-primary:hover {
+    background: #4f46e5;
+    transform: translateY(-2px);
+}
+.kyc-footer-global {
+    margin-top: 16px;
+    font-size: 0.875rem;
+    color: #64748b;
+}
+</style>
+<?php endif; ?>
+
   </body>
 </html>

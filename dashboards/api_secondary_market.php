@@ -32,8 +32,8 @@ try {
     // We check how many shares they actually have vs how many they are trying to list
     // Note: They might already have some shares listed for sale elsewhere, so we should subtract those.
     
-    // Total Shares Held
-    $stmt_held = $conn->prepare("SELECT SUM(shares_bought) as total_held FROM investments WHERE investor_id = ? AND pitch_id = ?");
+    // Total Shares Held (Only released/finalized shares can be traded secondarily)
+    $stmt_held = $conn->prepare("SELECT SUM(shares_bought) as total_held FROM investments WHERE investor_id = ? AND pitch_id = ? AND payout_status = 'released'");
     $stmt_held->bind_param("ii", $investor_id, $pitch_id);
     $stmt_held->execute();
     $res_held = $stmt_held->get_result();

@@ -163,7 +163,17 @@ $percent_val = ($raised / $goal) * 100;
 // Cap the visual bar at 100% (so it doesn't overflow), but show the real text
 $width_val = min($percent_val, 100); 
 
+// --- DYNAMIC CALCULATION FOR RAISED AMOUNT ---
+$raised_sql = "SELECT SUM(amount) as total FROM investments WHERE pitch_id = ? AND status = 'completed'";
+$r_stmt = $conn->prepare($raised_sql);
+$r_stmt->bind_param("i", $id);
+$r_stmt->execute();
+$r_res = $r_stmt->get_result()->fetch_assoc();
+$live_raised = $r_res['total'] ?? 0;
 
+$live_percent = ($pitch['funding_goal'] > 0) ? ($live_raised / $pitch['funding_goal']) * 100 : 0;
+$width_val = min($live_percent, 100);
+$display_raised = "₹" . number_format($live_raised);
 ?>
 
 <!DOCTYPE html>
@@ -644,6 +654,10 @@ $width_val = min($percent_val, 100);
           </div>
 
           <div class="trust-badges">
+            <div class="trust-badge" style="background: linear-gradient(135deg, hsla(263, 70%, 76%, 0.2) 0%, hsla(280, 80%, 60%, 0.2) 100%); border: 1px solid var(--primary); color: white;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--primary);"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              AI Trust Score: <?php echo $pitch['warzone_score']; ?>%
+            </div>
             <?php if($pitch['is_approved']): ?>
             <div class="trust-badge success">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
@@ -915,11 +929,15 @@ $width_val = min($percent_val, 100);
             </svg> 
             Funding Progress
         </span>
-        <span class="progress-value"><?php echo number_format($percent_val, 1); ?>%</span>
+        <span class="progress-value"><?php echo number_format($live_percent, 1); ?>%</span>
     </div>
     
     <div class="progress-track">
         <div class="progress-fill" style="width: <?php echo $width_val; ?>%;"></div>
+    </div>
+    <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 0.8rem; color: var(--muted-foreground);">
+        <span>Raised: <?php echo $display_raised; ?></span>
+        <span>Goal: <?php echo $funding_fmt; ?></span>
     </div>
 </div>            </div>
           </div>

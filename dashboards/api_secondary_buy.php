@@ -78,27 +78,38 @@ try {
     $stmt_add->execute();
 
     // 8. LOG WALLET TRANSACTIONS
-    $stmt_log_buy = $conn->prepare("INSERT INTO wallet_transactions (user_id, amount, type, description) VALUES (?, ?, 'debit', ?)");
-    $desc_buy = "Secondary Purchase: $qty_wanted shares of " . $order_id;
-    $stmt_log_buy->bind_param("ids", $buyer_id, $total_cost, $desc_buy);
+    $txn_ref = "SEC-" . strtoupper(uniqid());
+
+    // Buyer Log (Debit)
+    $stmt_log_buy = $conn->prepare("INSERT INTO wallet_transactions (wallet_id, user_id, user_role, txn_type, amount, source, reference_id, status) VALUES (?, ?, 'investor', 'debit', ?, ?, ?, 'success')");
+    $desc_buy = "Bought $qty_wanted shares (Secondary)";
+    // We need to fetch wallet IDs first or use the session IDs
+    $stmt_tid_b = $conn->prepare("SELECT id FROM wallets WHERE user_id = ? AND user_role = 'investor'");
+    $stmt_tid_b->bind_param("i", $buyer_id); $stmt_tid_b->execute(); $w_buyer = $stmt_tid_b->get_result()->fetch_assoc();
+    
+    $stmt_log_buy->bind_param("iidss", $w_buyer['id'], $buyer_id, $total_cost, $desc_buy, $txn_ref);
     $stmt_log_buy->execute();
 
-    $stmt_log_sell = $conn->prepare("INSERT INTO wallet_transactions (user_id, amount, type, description) VALUES (?, ?, 'credit', ?)");
-    $desc_sell = "Secondary Sale: $qty_wanted shares of " . $order_id;
-    $stmt_log_sell->bind_param("ids", $seller_id, $transaction_value, $desc_sell);
+    // Seller Log (Credit)
+    $stmt_tid_s = $conn->prepare("SELECT id FROM wallets WHERE user_id = ? AND user_role = 'investor'");
+    $stmt_tid_s->bind_param("i", $seller_id); $stmt_tid_s->execute(); $w_seller = $stmt_tid_s->get_result()->fetch_assoc();
+
+    $stmt_log_sell = $conn->prepare("INSERT INTO wallet_transactions (wallet_id, user_id, user_role, txn_type, amount, source, reference_id, status) VALUES (?, ?, 'investor', 'credit', ?, ?, ?, 'success')");
+    $desc_sell = "Sold $qty_wanted shares (Secondary)";
+    $stmt_log_sell->bind_param("iidss", $w_seller['id'], $seller_id, $transaction_value, $desc_sell, $txn_ref);
     $stmt_log_sell->execute();
 
     // 9. TRANSFER SHARE OWNERSHIP (INVESTMENTS TABLE)
     // Add shares to Buyer
-    $stmt_inv_buy = $conn->prepare("INSERT INTO investments (investor_id, pitch_id, amount, shares_bought, status) VALUES (?, ?, ?, ?, 'completed')");
-    $stmt_inv_buy->bind_param("iidi", $buyer_id, $pitch_id, $transaction_value, $qty_wanted);
+    $stmt_inv_buy = $conn->prepare("INSERT INTO investments (investor_id, pitch_id, amount, shares_bought, investment_type, payout_status, status, transaction_id) VALUES (?, ?, ?, ?, 'secondary', 'released', 'completed', ?)");
+    $stmt_inv_buy->bind_param("iidds", $buyer_id, $pitch_id, $transaction_value, $qty_wanted, $txn_ref);
     $stmt_inv_buy->execute();
 
     // Deduct shares from Seller (Negative entry to balance the portfolio)
-    $stmt_inv_sell = $conn->prepare("INSERT INTO investments (investor_id, pitch_id, amount, shares_bought, status) VALUES (?, ?, ?, ?, 'transfer_out')");
+    $stmt_inv_sell = $conn->prepare("INSERT INTO investments (investor_id, pitch_id, amount, shares_bought, investment_type, payout_status, status, transaction_id) VALUES (?, ?, ?, ?, 'secondary', 'released', 'completed', ?)");
     $negative_val = -$transaction_value;
     $negative_qty = -$qty_wanted;
-    $stmt_inv_sell->bind_param("iidi", $seller_id, $pitch_id, $negative_val, $negative_qty);
+    $stmt_inv_sell->bind_param("iidds", $seller_id, $pitch_id, $negative_val, $negative_qty, $txn_ref);
     $stmt_inv_sell->execute();
 
     // 10. UPDATE LISTING

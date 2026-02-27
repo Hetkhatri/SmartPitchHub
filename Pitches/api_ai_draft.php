@@ -8,8 +8,21 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
-// 1. Configuration (Using the Groq key from your main console)
-$API_KEY = 'YOUR_GROQ_API_KEY'; 
+require_once '../db.php';
+$user_id = $_SESSION['user_id'];
+
+// Check KYC status for verified entrepreneurs only
+$kyc_res = $conn->query("SELECT kyc_status FROM entrepreneurs WHERE id = $user_id");
+$kyc = $kyc_res->fetch_assoc();
+if (($kyc['kyc_status'] ?? '') !== 'verified') {
+    echo json_encode(['success' => false, 'error' => 'Identity Verification Required: Please complete your KYC in the dashboard to use the AI Pitch Assistant.']);
+    exit;
+}
+
+// 1. Configuration (Using the centralized config)
+$config = require '../config.php';
+$API_KEY = $config['groq_api_key']; 
+$MODEL = $config['groq_model'] ?? 'llama-3.3-70b-versatile';
 
 // 2. Get Input
 $inputData = json_decode(file_get_contents('php://input'), true);
@@ -24,6 +37,9 @@ if (empty($field)) {
     exit;
 }
 
+// 2.5 Logic: Only enhance if there's text, otherwise draft something fresh based on Name/Industry
+$is_enhancing = !empty($current_text);
+
 // 3. Construct the Professional Prompt
 $field_names = [
     'shortPitch' => 'Elevator Pitch (150 chars max)',
@@ -37,27 +53,22 @@ $field_names = [
 
 $field_label = $field_names[$field] ?? $field;
 
-// ADD FIELD-SPECIFIC CONSTRAINTS
-$constraint = "";
-if ($field === 'shortPitch') {
-    $constraint = "STRICT LIMIT: Maximum 145 characters. It MUST be a single concise sentence. This is for an elevator pitch.";
-}
+$action_verb = $is_enhancing ? "ENHANCE and POLISH" : "DRAFT a high-quality professional";
 
 $prompt = "Act as a professional Startup Pitch Architect. 
-Your task is to ENHANCE the following pitch section for a startup.
+Your task is to $action_verb the following pitch section for a startup.
 
 Startup Name: $name
 Industry: $category
 Section: $field_label
-$constraint
 
-USER INPUT (FACTS TO PRESERVE): \"$current_text\"
+" . ($is_enhancing ? "USER'S DRAFT TO ENHANCE: \"$current_text\"" : "The user hasn't provided details yet. Generate a compelling placeholder based on the Industry.") . "
 
 INSTRUCTIONS:
-1. If the User Input is empty, generate a high-quality professional draft.
-2. If User Input has numbers (ARR, users, growth), do NOT change those numbers.
-3. Optimize for Venture Capital appeal: professional, polished, and exciting.
-4. Output ONLY the enhanced paragraph. NO preamble, NO 'Here is the draft', NO quotes.
+1. Preserve all factual data (numbers, metrics, specific names).
+2. Use professional, VC-ready language.
+3. Keep it concise but impactful.
+4. Output ONLY the resulting paragraph. NO introductory text, NO quotes, NO 'Here is the version'.
 
 Enhanced Text:";
 
@@ -69,7 +80,7 @@ $headers = [
 ];
 
 $payload = [
-    "model" => "llama-3.3-70b-versatile", 
+    "model" => $MODEL, 
     "messages" => [
         ["role" => "system", "content" => "You are a professional pitch writer. Output raw text only."],
         ["role" => "user", "content" => $prompt]

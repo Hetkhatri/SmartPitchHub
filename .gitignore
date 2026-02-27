@@ -1,0 +1,28 @@
+# .gitignore
+
+# PHP Composer dependencies
+/vendor/
+
+# Environment and sensitive config
+.env
+config.php
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+
+# Uploads and User Data
+/uploads/
+/Database/*.sql
+/KYC/*.log
+*.log
+
+# XAMPP specific
+/php/
+/apache/
+/tmp/
+/vendor/

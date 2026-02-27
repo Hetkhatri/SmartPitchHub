@@ -31,13 +31,25 @@ try {
         exit;
     }
 
-    // 2. Map Status
+    // 2. Map Status & Check Warzone
+    $wz_check_sql = "SELECT id FROM warzone_sessions WHERE pitch_id = ? AND status = 'completed' LIMIT 1";
+    $wz_stmt = $conn->prepare($wz_check_sql);
+    $wz_stmt->bind_param("i", $pitch['id']);
+    $wz_stmt->execute();
+    $wz_res = $wz_stmt->get_result()->fetch_assoc();
+    $warzone_completed = $wz_res ? true : false;
+
     $status_map = [
         0 => 'under_review',
         1 => 'approved',
         2 => 'rejected'
     ];
     $ui_status = $status_map[$pitch['is_approved']] ?? 'under_review';
+    
+    // If approved by admin but warzone is not completed, change status
+    if ($ui_status === 'approved' && !$warzone_completed) {
+        $ui_status = 'pending_warzone';
+    }
 
     // 3. Fetch Documents
     $doc_stmt = $conn->prepare("SELECT name, type, file_url FROM pitch_documents WHERE pitch_id = ?");
@@ -56,6 +68,7 @@ try {
     // 4. Response
     $response = [
         'status' => 'success',
+        'pitch_id' => $pitch['id'],
         'pitch_status' => $ui_status,
         'dates' => [
             'submitted' => date("F j, Y", strtotime($pitch['created_at'])),

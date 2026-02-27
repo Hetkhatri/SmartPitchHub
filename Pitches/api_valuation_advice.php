@@ -1,6 +1,7 @@
 <?php
 // Pitches/api_valuation_advice.php
-error_reporting(0);
+error_reporting(E_ALL);
+ini_set('display_errors', 0); // Keep JSON clean, but log errors
 header('Content-Type: application/json');
 session_start();
 
@@ -94,9 +95,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             echo json_encode(['status' => 'success', 'data' => $result]);
         } else {
             $err_msg = isset($result['error']) ? $result['error'] : trim($stderr);
+            if (empty($err_msg) && $return_value !== 0) {
+                $err_msg = "Python process exited with code $return_value";
+            }
             echo json_encode([
                 'status' => 'error', 
-                'message' => 'AI Engine: ' . ($err_msg ?: 'Process returned no data'),
+                'message' => 'AI Engine: ' . ($err_msg ?: 'Process returned no data or invalid JSON'),
                 'debug' => [
                     'cmd' => $cmd,
                     'stdout' => $stdout,

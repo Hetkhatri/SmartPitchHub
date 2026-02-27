@@ -18,10 +18,11 @@ if (!isset($_SESSION['user_id'])) {
 $user_id = $_SESSION['user_id'];
 
 try {
-    // 3. Fetch Data (Added Bank & specific Document columns)
+    // 3. Fetch Data (Added k.id to check existence)
     $sql = "SELECT 
                 e.id, e.name as user_name, e.email, e.contact, e.startup_name as basic_startup_name, 
                 e.kyc_status as main_status, e.created_at,
+                k.id as kyc_detail_id,
                 k.full_name, k.dob, k.nationality, k.country,
                 k.legal_name, k.brand_name, k.business_type, k.industry, k.business_address, k.cin,
                 k.bank_name, k.account_holder_name, k.account_number, k.ifsc_code,
@@ -38,6 +39,9 @@ try {
     $user = $result->fetch_assoc();
 
     if (!$user) { echo json_encode(['status' => 'error', 'message' => 'User not found']); exit; }
+
+    // IF no KYC detail record exists, we should probably tell the frontend
+    $has_submitted = !empty($user['kyc_detail_id']);
 
     // 4. Map Documents (Dynamic List)
     $docs = [];
@@ -65,7 +69,8 @@ try {
     // 6. Response
     $response = [
         'status' => 'success',
-        'kyc_status' => $ui_status,
+        'has_submitted' => $has_submitted,
+        'kyc_status' => $has_submitted ? $ui_status : 'not_submitted',
         'dates' => [
             'submitted' => !empty($user['submission_date']) ? date("F j, Y", strtotime($user['submission_date'])) : 'Not Submitted',
             'updated'   => date("F j, Y") 

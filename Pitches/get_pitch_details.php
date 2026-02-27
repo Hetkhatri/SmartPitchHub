@@ -38,7 +38,8 @@ $sql = "
         e.name AS founder_name,
         e.email AS founder_email,
         e.contact AS founder_contact,
-        e.startup_name
+        e.startup_name,
+        COALESCE((SELECT SUM(amount) FROM investments WHERE pitch_id = p.id AND status = 'completed'), 0) as amount_raised
     FROM pitches p
     JOIN entrepreneurs e ON p.entrepreneur_id = e.id
     WHERE p.id = ?
@@ -57,6 +58,10 @@ if ($stmt = $conn->prepare($sql)) {
         // SAFE FETCH: Handle potentially missing image
         $logo = $row['pitch_logo'] ?? $row['logo'] ?? '';
 
+        $raised = (float)$row['amount_raised'];
+        $goal = (float)($row['funding_goal'] ?? 0);
+        $progress = ($goal > 0) ? min(100, round(($raised / $goal) * 100)) : 0;
+
         // Format data
         $pitch = [
             'status' => true,
@@ -67,7 +72,12 @@ if ($stmt = $conn->prepare($sql)) {
             'category' => $category,
             'description' => $row['description'],
             'funding' => '₹' . number_format($row['funding_goal']),
-            'equity' => ($row['equity_offer'] ?? 0), // Added equity since dashboard uses it
+            'funding_goal' => $goal,
+            'amount_raised' => $raised,
+            'amount_raised_fmt' => '₹' . number_format($raised),
+            'progress' => $progress,
+            'share_price' => (float)($row['share_price'] ?? 0),
+            'shares_issued' => (int)($row['shares_issued'] ?? 0),
             'stage' => $row['stage'],
             'logo' => $logo,
             'likes' => $row['likes'] ?? 0,

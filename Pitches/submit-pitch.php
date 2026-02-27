@@ -40,6 +40,18 @@ if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== 'entrepreneur')
     sendJson(false, "Access Denied. Only entrepreneurs can submit pitches.");
 }
 
+// 4.1 KYC Check (Production Standard)
+$kycSql = "SELECT kyc_status, total_shares, available_shares FROM entrepreneurs WHERE id = ?";
+$kycStmt = $conn->prepare($kycSql);
+$kycStmt->bind_param("i", $user_id);
+$kycStmt->execute();
+$kycRes = $kycStmt->get_result()->fetch_assoc();
+if (!$kycRes || $kycRes['kyc_status'] !== 'verified') {
+    sendJson(false, "Identity Verification Required. Please complete your KYC in the dashboard before submitting a pitch.");
+}
+$totalShares = intval($kycRes['total_shares']);
+$availableShares = intval($kycRes['available_shares']);
+
 $mode = $_POST['mode'] ?? 'new';
 
 // Check for existing pitch ONLY if not launching a next round
@@ -165,14 +177,34 @@ try {
     $durationDays = isset($_POST['fundDuration']) ? (int)$_POST['fundDuration'] : 60;
     $expiryDate = date('Y-m-d H:i:s', strtotime("+$durationDays days"));
 
+    // Capture Justification ID
+    $valuationRequestId = isset($_POST['valuation_request_id']) ? (int)$_POST['valuation_request_id'] : null;
+    
+    // Capture Payment Info
+    $paymentId = $_POST['payment_id'] ?? null;
+    $platformFee = $fundingGoal * 0.02;
+
+    if (!$paymentId) {
+        throw new Exception("Platform fee payment is required to submit a pitch.");
+    }
+
+    if (!$valuationRequestId) {
+        throw new Exception("Valuation Justification required. Please complete the Detailed Valuation Builder first.");
+    }
+
+    // Capture Problem/Solution for length check on backend too
+    if (strlen($problem) < 50 || strlen($solution) < 50) {
+        throw new Exception("Problem and Solution details are too short. Please provide more detail (min 50 chars).");
+    }
+
     // C. Insert into Pitches Table (Updated Schema with Rounds Logic)
     $sql = "INSERT INTO pitches (
                 entrepreneur_id, startup_name, tagline, industry, problem, solution, stage, 
-                description, location, funding_goal, valuation, min_investment, 
+                description, location, funding_goal, valuation, platform_fee, platform_fee_paid, razorpay_payment_id, min_investment, 
                 round_name, share_price, shares_issued, 
                 duration_days, expiry_date, round_status, round_number,
-                is_approved, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 0, NOW())";
+                is_approved, valuation_request_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 0, ?, NOW())";
     
     $stmt = $conn->prepare($sql);
     if (!$stmt) throw new Exception("Prepare failed: " . $conn->error);
@@ -180,12 +212,12 @@ try {
     // Params: i=int, s=string, d=decimal
     $minInvestment = 10000; // Default
     
-    // Bind: i(id), s(name), s(tag), s(ind), s(prob), s(sol), s(stg), s(desc), s(loc), d(goal), d(val), d(min), s(rnd), d(price), i(issued), i(duration), s(expiry), i(roundNumber)
-    $stmt->bind_param("issssssssdddsdiisi", 
+    // Bind: i(id), s(name), s(tag), s(ind), s(prob), s(sol), s(stg), s(desc), s(loc), d(goal), d(val), d(fee), s(pay_id), d(min), s(rnd), d(price), i(issued), i(duration), s(expiry), i(roundNumber), i(val_Req_id)
+    $stmt->bind_param("issssssssdddssdiiisii", 
         $user_id, $startupName, $tagline, $category, $problem, $solution, $stage, 
-        $description, $location, $fundingGoal, $valuation, $minInvestment, 
+        $description, $location, $fundingGoal, $valuation, $platformFee, $paymentId, $minInvestment, 
         $roundName, $sharePrice, $sharesToIssue,
-        $durationDays, $expiryDate, $roundNumber
+        $durationDays, $expiryDate, $roundNumber, $valuationRequestId
     );
     
     if (!$stmt->execute()) {

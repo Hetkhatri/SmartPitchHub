@@ -530,8 +530,26 @@
                 </div>
             </div>
             <h1>Pitch Submitted Successfully!</h1>
-            <p>Your payment was successful and your pitch has been submitted for admin review.</p>
+            <p id="main-hero-text">Your payment was successful and your pitch has been submitted for admin review.</p>
         </section>
+
+        <div id="warzone-result-card" class="card" style="display: none; margin-bottom: 2rem; border: 2px solid var(--primary); background: rgba(167, 139, 250, 0.05);">
+            <div class="card-header">
+                <div class="card-title" style="color: var(--primary);">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    Warzone Combat Record
+                </div>
+                <div class="badge" style="background: var(--primary); color: white;">AUDIT COMPLETE</div>
+            </div>
+            <div style="padding: 2rem; text-align: center;">
+                <div style="font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 0.5rem;">Survival Probability</div>
+                <div id="final-warzone-score" style="font-size: 4rem; font-weight: 800; color: var(--primary); text-shadow: 0 0 20px var(--primary-glow);">94%</div>
+                <div id="warzone-verdict" style="margin-top: 1rem; font-size: 1.1rem; font-weight: 600;">STATUS: BATTLE READY</div>
+                <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.5rem;">The AI Auditor has evaluated your pitch defense. This score is visible to investors.</p>
+            </div>
+        </div>
 
         <div class="cards-grid">
             <div class="card">
@@ -816,8 +834,32 @@
 
             // --- Warzone Integration ---
             const pitchId = params.get('pitch_id');
+            const status = params.get('status');
+            const score = params.get('score');
             const warzoneBtn = document.getElementById('warzoneBtn');
-            if (pitchId && warzoneBtn) {
+            const warzoneCard = document.getElementById('warzone-result-card');
+            const heroText = document.getElementById('main-hero-text');
+
+            if (status === 'completed' && score) {
+                if (warzoneCard) {
+                    warzoneCard.style.display = 'block';
+                    document.getElementById('final-warzone-score').textContent = score + '%';
+                    
+                    const verdict = document.getElementById('warzone-verdict');
+                    if (score >= 80) {
+                        verdict.textContent = "STATUS: BATTLE READY";
+                        verdict.style.color = "var(--success)";
+                    } else if (score >= 50) {
+                        verdict.textContent = "STATUS: REINFORCEMENT REQUIRED";
+                        verdict.style.color = "var(--warning)";
+                    } else {
+                        verdict.textContent = "STATUS: COMBAT CRITICAL";
+                        verdict.style.color = "#ef4444";
+                    }
+                }
+                if (heroText) heroText.textContent = "Combat Audit Complete. Your pitch is now in the queue for final human verification.";
+                if (warzoneBtn) warzoneBtn.style.display = 'none';
+            } else if (pitchId && warzoneBtn) {
                 warzoneBtn.href = `../Pitches/warzone.php?pitch_id=${pitchId}`;
                 warzoneBtn.style.display = 'inline-flex';
             }

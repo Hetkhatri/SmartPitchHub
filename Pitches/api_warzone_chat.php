@@ -53,11 +53,14 @@ $pitch = $p_stmt->get_result()->fetch_assoc();
 
 // 3. AI Helper Function
 function callGroqWarzone($messages) {
-    $api_key = 'YOUR_GROQ_API_KEY';
+    $config = require '../config.php';
+    $api_key = $config['groq_api_key'];
+    $model = $config['groq_model'] ?? 'llama-3.3-70b-versatile';
+    
     $url = "https://api.groq.com/openai/v1/chat/completions";
     
     $payload = [
-        "model" => "llama-3.3-70b-versatile",
+        "model" => $model,
         "messages" => $messages,
         "temperature" => 0.5,
         "response_format" => ["type" => "json_object"]
@@ -99,13 +102,21 @@ Startup: {$pitch['startup_name']}
 Industry: {$pitch['industry']}
 Funding Goal: ₹" . number_format($pitch['funding_goal']) . "
 
+SECURITY PROTOCOLS (ULTRA-LENIENT):
+1. **AI-DETECTION SCAN**: Only flag 'ai_detected': true if the user literally says 'As an AI language model' or provides a perfectly formatted, 5-point numbered list with zero personal details. 
+2. **BLOCK COMPLETION**: If 'ai_detected' is true, you MUST set 'finished': false. 
+3. **DEFAULT TO HUMAN**: If you are unsure, ALWAYS assume the user is human. Personal stories, bad grammar, slang, or very short answers are signs of humans, NOT AI.
+4. **DO NOT PENALIZE** unless it is a 100% obvious copy-paste from a generic chatbot about abstract concepts. We value the founder's voice, even if it is simple.
+5. If you DO detect AI, just give a mild warning in the 'reply' and keep 'ai_detected' as true, but don't drop the score as harshly unless they keep doing it.
+
 RULES:
 1. Be direct, tough, and slightly robotic/cyberpunk.
 2. Ask exactly 3 questions, one by one.
 3. After the user answers the 3rd question, give a final verdict.
 4. On every response, you must return JSON with:
-   'reply': Your next question or final verdict.
-   'survival_score': current survival probability (0-100) based on their defense.
+   'reply': Your next question, warning, or final verdict.
+   'survival_score': current survival probability (0-100) based on their defense. 
+   'ai_detected': boolean true if the response was flagged as AI-generated.
    'finished': boolean true if the warzone is over.
 
 Current history length: " . count($history);
@@ -125,8 +136,27 @@ $next_reply = $ai_data['reply'] ?? "Interference detected. Signal lost.";
 $survival_score = $ai_data['survival_score'] ?? $survival_score;
 $finished = $ai_data['finished'] ?? false;
 
+// ONLY trigger AI Detection if a User Message was actually sent in this request
+$ai_detected = false;
+if ($user_msg !== '' && isset($ai_data['ai_detected'])) {
+    $ai_detected = (bool)$ai_data['ai_detected'];
+}
+
+// BLOCK COMPLETION: If AI is detected, we never finish. 
+// The user MUST provide a human response to escape the warzone.
+if ($ai_detected) {
+    $finished = false;
+}
+
 if ($finished) {
-    $redirect = "../pages/createPitchSucccess.php";
+    $final_score = max(0, min(100, (int)$survival_score));
+    $redirect = "../pages/createPitchSucccess.php?pitch_id=" . $pitch_id . "&status=completed&score=" . $final_score;
+    
+    // Update Pitch Table with the final survival score
+    $p_up_sql = "UPDATE pitches SET warzone_score = ? WHERE id = ?";
+    $p_up_stmt = $conn->prepare($p_up_sql);
+    $p_up_stmt->bind_param("ii", $final_score, $pitch_id);
+    $p_up_stmt->execute();
 }
 
 $history[] = ['role' => 'ai', 'content' => $next_reply];
@@ -143,6 +173,7 @@ echo json_encode([
     'success' => true,
     'reply' => $next_reply,
     'score' => max(0, min(100, (int)$survival_score)),
-    'redirect' => $redirect
+    'redirect' => $redirect,
+    'ai_detected' => $ai_detected
 ]);
 ?>

@@ -10,11 +10,15 @@ if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'entrepreneur') {
 
 $user_id = $_SESSION['user_id'];
 
-// 2. Fetch Entrepreneur's Profile (for share data)
-$total_shares = 50000; // Default
+// 2. Fetch Entrepreneur's Profile
+$total_shares = 50000;
 $available_shares = 50000;
+$user_email = "";
+$user_name = "";
 
-$u_sql = "SELECT total_shares, available_shares FROM entrepreneurs WHERE id = ?";
+$u_sql = "SELECT total_shares, available_shares, email, name, kyc_status 
+          FROM entrepreneurs 
+          WHERE id = ?";
 if ($stmt = $conn->prepare($u_sql)) {
     $stmt->bind_param("i", $user_id);
     $stmt->execute();
@@ -22,7 +26,17 @@ if ($stmt = $conn->prepare($u_sql)) {
     if ($res) {
         $total_shares = $res['total_shares'] ?? 50000;
         $available_shares = $res['available_shares'] ?? 50000;
+        $user_email = $res['email'] ?? "";
+        $user_name = $res['name'] ?? "";
+        $kyc_status = $res['kyc_status'] ?? 'not_submitted';
     }
+}
+
+// 2.5 KYC Verification Check (REQUIRED for fundraising)
+if (($res['kyc_status'] ?? 'not_submitted') !== 'verified') {
+    $_SESSION['error'] = "You must complete and verify your Identity (KYC) before you can create a pitch. Please go to your dashboard to complete this step.";
+    header("Location: ../dashboards/Entrepreneur-dashboard.php");
+    exit;
 }
 
 // 3. Determine Investment Round Automatically & Check Status
@@ -350,6 +364,10 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
       width: 40px; height: 40px; border: 2px solid hsl(185, 100%, 50%, 0.3);
       border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite;
     }
+    .spinner-small {
+      width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite;
+    }
     .modal-body-loading { display: flex; flex-direction: column; align-items: center; padding: 2.5rem 0; gap: 1rem; }
     .modal-body-loading p { font-size: 0.875rem; color: var(--muted); }
     .modal-result { display: flex; flex-direction: column; gap: 1.25rem; }
@@ -392,7 +410,7 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
 
     <!-- Header -->
     <div class="header">
-      <button class="back-btn">
+      <button class="back-btn" onclick="window.location.href='../dashboards/Entrepreneur-dashboard.php'">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
         Back
       </button>
@@ -560,7 +578,7 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
             </div>
           </div>
           <div style="margin-top: 1rem; font-size: 0.75rem; color: var(--muted);">
-            Based on your company's total equity of <strong style="color:var(--fg)"><?php echo number_format($total_shares); ?></strong> shares. 
+            Based on your company's total authorized pool of <strong style="color:var(--fg)"><?php echo number_format($total_shares); ?></strong> shares. 
             Available to sell: <strong style="color:var(--fg)"><?php echo number_format($available_shares); ?></strong> shares.
           </div>
         </div>
@@ -585,8 +603,8 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
           <div class="summary-grid" id="summary-grid"></div>
           <div class="equity-bar-wrap">
             <div class="equity-bar-header">
-              <span style="color: var(--muted)">Equity Breakdown</span>
-              <span class="glow-cyan" id="equity-label">0% offered</span>
+              <span style="color: var(--muted)">Round Inventory Impact</span>
+              <span class="glow-cyan" id="equity-label">0 shares from treasury</span>
             </div>
             <div class="equity-bar"><div class="equity-bar-fill" id="equity-fill" style="width: 0%"></div></div>
           </div>
@@ -608,10 +626,14 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
     </div>
   </div>
 
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
   <script>
     // ===== CONFIG FROM PHP =====
     const TOTAL_COMP_SHARES = <?php echo $total_shares; ?>;
     const AVAILABLE_SHARES = <?php echo $available_shares; ?>;
+    const USER_EMAIL = "<?php echo $user_email; ?>";
+    const USER_NAME = "<?php echo $user_name; ?>";
+    const RZP_KEY = "rzp_test_RqNEO4nEE8Twff"; // In production, move to env/config
 
     // ===== DATA =====
     const pitchFields = [
@@ -644,7 +666,7 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
           <label class="neon-label">${label}</label>
           <button class="neon-btn-ai" id="ai-${key}" onclick="generateAI('${key}')">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.287 1.288L3 12l5.8 1.9a2 2 0 0 1 1.288 1.287L12 21l1.9-5.8a2 2 0 0 1 1.287-1.288L21 12l-5.8-1.9a2 2 0 0 1-1.288-1.287Z"/></svg>
-            Generate with AI
+            Enhance with AI
           </button>
         </div>
         <textarea class="neon-textarea" id="pitch-${key}" placeholder="${placeholder}"></textarea>
@@ -686,18 +708,50 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
       docContainer.appendChild(tile);
     });
 
-    // ===== AI GENERATE =====
-    function generateAI(key) {
+    // ===== AI GENERATE / ENHANCE =====
+    async function generateAI(key) {
       const btn = document.getElementById('ai-' + key);
+      const textarea = document.getElementById('pitch-' + key);
+      const currentText = textarea.value.trim();
+      const startupName = document.getElementById('name').value || 'My Startup';
+      const category = document.getElementById('industry').value || 'Technology';
+
+      // Map 'description' key to 'shortPitch' for the backend
+      const apiKey = (key === 'description') ? 'shortPitch' : key;
+
       btn.disabled = true;
-      btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.287 1.288L3 12l5.8 1.9a2 2 0 0 1 1.288 1.287L12 21l1.9-5.8a2 2 0 0 1 1.287-1.288L21 12l-5.8-1.9a2 2 0 0 1-1.288-1.287Z"/></svg> Generating...`;
-      setTimeout(() => {
-        document.getElementById('pitch-' + key).value = aiSamples[key] || '';
+      const originalHtml = btn.innerHTML;
+      btn.innerHTML = `<div class="spinner-small" style="margin-right:8px; width:14px; height:14px; border-width:2px; display:inline-block; vertical-align:middle;"></div> Enhancing...`;
+
+      try {
+        const response = await fetch('api_ai_draft.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            field: apiKey,
+            name: startupName,
+            category: category,
+            current_text: currentText
+          })
+        });
+
+        const result = await response.json();
+
+        if (result.success && result.draft) {
+          textarea.value = result.draft;
+          updateSummary();
+          checkValidity();
+        } else {
+          const errorMsg = result.error || 'Check if your API Key is configured in api_ai_draft.php';
+          alert('AI Advisor: ' + errorMsg);
+        }
+      } catch (err) {
+        console.error("AI Error:", err);
+        alert('Connection to AI Advisor failed. Please check your network.');
+      } finally {
         btn.disabled = false;
-        btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.287 1.288L3 12l5.8 1.9a2 2 0 0 1 1.288 1.287L12 21l1.9-5.8a2 2 0 0 1 1.287-1.288L21 12l-5.8-1.9a2 2 0 0 1-1.288-1.287Z"/></svg> Generate with AI`;
-        updateSummary();
-        checkValidity();
-      }, 1500);
+        btn.innerHTML = originalHtml;
+      }
     }
 
     // ===== SUMMARY & LOGIC =====
@@ -710,14 +764,14 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
       // SHARE LOGIC CALCULATIONS
       let sp = 0;
       let si = 0;
-      let equity = 0;
+      let pool_percent = 0;
       let fee = goal * 0.02;
 
       if (val > 0) {
         sp = val / TOTAL_COMP_SHARES;
         if (goal > 0 && sp > 0) {
           si = Math.floor(goal / sp);
-          equity = ((si / TOTAL_COMP_SHARES) * 100).toFixed(2);
+          pool_percent = ((si / TOTAL_COMP_SHARES) * 100).toFixed(2);
         }
       }
 
@@ -740,16 +794,15 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
         ['Funding Goal', goal ? '₹' + goal.toLocaleString() : '—'],
         ['Valuation', val ? '₹' + val.toLocaleString() : '—'],
         ['Share Price', sp ? '₹' + sp.toLocaleString(undefined, {minimumFractionDigits: 2}) : '—'],
-        ['Shares to Sell', si ? si.toLocaleString() : '—'],
-        ['Equity Offered', equity + '%'],
+        ['Shares in Round', si ? si.toLocaleString() : '—'],
         ['Platform Fee (2%)', fee ? '₹' + fee.toLocaleString() : '—'],
       ];
 
       const grid = document.getElementById('summary-grid');
       grid.innerHTML = items.map(([l, v]) => `<div class="summary-row"><span class="summary-label">${l}</span><span class="summary-value">${v}</span></div>`).join('');
 
-      document.getElementById('equity-label').textContent = equity + '% offered';
-      document.getElementById('equity-fill').style.width = Math.min(parseFloat(equity), 100) + '%';
+      document.getElementById('equity-label').textContent = si.toLocaleString() + ' shares from treasury';
+      document.getElementById('equity-fill').style.width = Math.min(parseFloat(pool_percent), 100) + '%';
 
       // Check if trying to sell more than available
       if (si > AVAILABLE_SHARES) {
@@ -802,17 +855,29 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
           })
         });
 
-        const result = await response.json();
+        const text = await response.text();
+        let result;
+        try {
+          result = JSON.parse(text);
+        } catch (e) {
+          console.error("Non-JSON Result:", text);
+          throw new Error("Server returned invalid response. Check console.");
+        }
 
         if (result.status === 'success' && result.data) {
           const advice = result.data;
           feedbackArea.style.display = 'block';
-          valScore.innerText = advice.score + "% Confidence";
-          valMessage.innerText = advice.message;
+          
+          // Match Python keys: confidence -> score, advice -> message
+          const displayScore = advice.confidence || advice.score || 0;
+          const displayMessage = advice.advice || advice.message || "No specific advice available.";
 
-          if (advice.message.toLowerCase().includes('fair') || advice.message.toLowerCase().includes('aligns')) {
+          valScore.innerText = displayScore + "% Confidence";
+          valMessage.innerText = displayMessage;
+
+          if (displayMessage.toLowerCase().includes('fair') || displayMessage.toLowerCase().includes('attractive')) {
             valScore.style.color = 'var(--primary)';
-          } else if (advice.message.toLowerCase().includes('aggressive')) {
+          } else if (displayMessage.toLowerCase().includes('aggressive')) {
             valScore.style.color = 'var(--secondary)';
           } else {
             valScore.style.color = 'var(--muted)';
@@ -823,7 +888,7 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
         }
       } catch (err) {
         console.error("Advisor Error:", err);
-        alert("Connection to AI Advisor failed.");
+        alert("Connection to AI Advisor failed. Server may be offline or Python environment is not configured.");
       } finally {
         btn.classList.remove('loading');
       }
@@ -870,7 +935,39 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
       });
     }
 
-    ['pitch-problem', 'pitch-solution'].forEach(id => {
+    // ===== MESSAGE LISTENER (From Valuation Builder Popup) =====
+    window.addEventListener('message', (event) => {
+      // Security: You might want to check event.origin here
+      if (event.data && event.data.type === 'VALUATION_COMPLETED') {
+        const requestId = event.data.id;
+        const actionArea = document.getElementById('valuation-action-area');
+        const applyVerdictBox = document.getElementById('applied-verdict-box');
+        
+        if (actionArea) {
+          actionArea.innerHTML = `
+            <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid var(--primary); border-radius: 12px; padding: 1rem; display: flex; align-items: center; gap: 0.75rem; justify-content: center;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              <span style="color: var(--fg); font-weight: 600; font-size: 0.9rem;">Valuation Justified (Ref: #${requestId})</span>
+            </div>
+          `;
+          actionArea.style.display = 'block';
+        }
+        
+        // Disable the lock button to prevent unlocking after justification
+        const lockBtn = document.getElementById('lock-valuation-btn');
+        if (lockBtn) {
+          lockBtn.style.pointerEvents = 'none';
+          lockBtn.style.opacity = '0.5';
+        }
+
+        // Store justification ID for final submission
+        window.valuationRequestId = requestId;
+        
+        checkValidity();
+      }
+    });
+
+    ['pitch-problem', 'pitch-solution', 'pitch-traction'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.addEventListener('input', checkValidity);
     });
@@ -878,30 +975,96 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
     // ===== VALIDATION =====
     function checkValidity() {
       const isShareValid = updateSummary();
-      const filled =
-        document.getElementById('name').value &&
-        document.getElementById('industry').value &&
-        document.getElementById('stage').value &&
-        document.getElementById('investmentRound').value &&
-        document.getElementById('fundDuration').value &&
-        document.getElementById('pitch-problem').value &&
-        document.getElementById('pitch-solution').value &&
-        document.getElementById('fundingGoal').value &&
-        document.getElementById('valuation').value &&
-        isShareValid;
       
-      document.getElementById('submit-btn').disabled = !filled;
-      document.getElementById('cta-hint').style.display = filled ? 'none' : 'block';
+      const name = document.getElementById('name').value.trim();
+      const industry = document.getElementById('industry').value;
+      const stage = document.getElementById('stage').value;
+      const round = document.getElementById('investmentRound').value;
+      const duration = document.getElementById('fundDuration').value;
+      const problem = document.getElementById('pitch-problem').value.trim();
+      const solution = document.getElementById('pitch-solution').value.trim();
+      const traction = document.getElementById('pitch-traction').value.trim();
+      const goal = document.getElementById('fundingGoal').value;
+      const valuation = document.getElementById('valuation').value;
+
+      // Essential Basic Fields
+      let filled = name && industry && stage && round && duration && goal && valuation && isShareValid;
+      
+      // Advanced Content Validation (Min Lengths)
+      const contentQuality = problem.length >= 50 && solution.length >= 50 && traction.length >= 20;
+      
+      // Valuation Justification (Hard Stop)
+      const isJustified = !!window.valuationRequestId;
+
+      const isFullyReady = filled && contentQuality && isJustified;
+      
+      document.getElementById('submit-btn').disabled = !isFullyReady;
+      
+      const hint = document.getElementById('cta-hint');
+      if (!filled) {
+        hint.textContent = "Please complete all identity and financial fields.";
+      } else if (!contentQuality) {
+        hint.textContent = "Write more detail for Problem, Solution, and Traction (Min 50 chars).";
+      } else if (!isJustified) {
+        hint.textContent = "Lock your valuation and complete the Detailed Builder to justify your number.";
+      } else {
+        hint.textContent = "All systems ready. Launch your pitch!";
+        hint.style.color = 'var(--primary)';
+      }
+      
+      hint.style.display = isFullyReady ? 'none' : 'block';
     }
     updateSummary();
 
-    // ===== SUBMIT (AJAX) =====
+    // ===== SUBMIT (AJAX with Razorpay) =====
     document.getElementById('submit-btn').addEventListener('click', async () => {
       const btn = document.getElementById('submit-btn');
       const originalHtml = btn.innerHTML;
       
+      const cleanGoal = document.getElementById('fundingGoal').value.replace(/[^\d.]/g, '');
+      const platformFee = parseFloat(cleanGoal) * 0.02;
+
+      if (platformFee <= 0) {
+          alert("Invalid funding goal. Fee cannot be calculated.");
+          return;
+      }
+
+      // 1. OPEN RAZORPAY
+      const options = {
+        key: RZP_KEY,
+        amount: Math.round(platformFee * 100), // In paise
+        currency: "INR",
+        name: "SmartPitchHub",
+        description: "Pitch Platform Fee (2%)",
+        handler: function (response) {
+            // IF PAYMENT SUCCESSFUL -> CONTINUE TO SUBMIT PITCH
+            submitFinalPitch(response.razorpay_payment_id);
+        },
+        prefill: {
+          name: USER_NAME,
+          email: USER_EMAIL
+        },
+        theme: {
+          color: "#00d1ff"
+        },
+        modal: {
+          ondismiss: function() {
+              btn.disabled = false;
+              btn.innerHTML = originalHtml;
+          }
+        }
+      };
+
+      const rzp = new Razorpay(options);
+      rzp.open();
+    });
+
+    async function submitFinalPitch(paymentId) {
+      const btn = document.getElementById('submit-btn');
+      const originalHtml = btn.innerHTML;
+
       btn.disabled = true;
-      btn.innerHTML = `<div class="spinner" style="width:20px;height:20px;border-width:2px;margin-right:10px;"></div> Processing...`;
+      btn.innerHTML = `<div class="spinner" style="width:20px;height:20px;border-width:2px;margin-right:10px;"></div> Finalizing Pitch...`;
 
       const formData = new FormData();
       formData.append('startupName', document.getElementById('name').value);
@@ -915,12 +1078,12 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
       formData.append('description', document.getElementById('pitch-description').value);
       formData.append('traction', document.getElementById('pitch-traction').value);
 
-      // Clean numeric inputs (remove commas/currency symbols)
       const cleanGoal = document.getElementById('fundingGoal').value.replace(/[^\d.]/g, '');
       const cleanVal = document.getElementById('valuation').value.replace(/[^\d.]/g, '');
 
       formData.append('fundingRequired', cleanGoal);
       formData.append('valuation', cleanVal);
+      formData.append('payment_id', paymentId);
       formData.append('roundName', document.getElementById('investmentRound').value);
       formData.append('fundDuration', document.getElementById('fundDuration').value);
       formData.append('mode', 'new');
@@ -928,6 +1091,10 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
       // Add Files
       for (const [key, file] of Object.entries(selectedFiles)) {
           formData.append(key, file);
+      }
+
+      if (window.valuationRequestId) {
+          formData.append('valuation_request_id', window.valuationRequestId);
       }
 
       try {
@@ -939,7 +1106,6 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
 
           if (result.success) {
               btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Entry Granted!`;
-              // NEW: Use the redirect provided by the server (AI Warzone)
               setTimeout(() => {
                 window.location.href = result.redirect || '../dashboards/Entrepreneur-dashboard.php';
               }, 1500);
@@ -954,7 +1120,7 @@ $current_round = ($round_count < count($rounds_sequence)) ? $rounds_sequence[$ro
           btn.disabled = false;
           btn.innerHTML = originalHtml;
       }
-    });
+    }
   </script>
 </body>
 </html>

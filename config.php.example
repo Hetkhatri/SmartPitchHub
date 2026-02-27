@@ -1,0 +1,36 @@
+<?php
+// config.php.example - Copy this to config.php and fill in your keys
+return [
+  // Razorpay Settings
+  'razorpay_key' => 'YOUR_RAZORPAY_KEY',
+  'razorpay_secret' => 'YOUR_RAZORPAY_SECRET',
+
+  // Groq AI Settings
+  'groq_api_key' => 'YOUR_GROQ_API_KEY',
+  'groq_model' => 'llama-3.3-70b-versatile',
+
+  // Other APIs
+  'abstract_api_key' => 'YOUR_ABSTRACT_API_KEY', // Email validation service
+
+  // SMTP Mailer Settings (Unified)
+  'smtp_host' => 'smtp.gmail.com',
+  'smtp_user' => 'your-email@gmail.com',
+  'smtp_pass' => 'YOUR_SMTP_PASSWORD', 
+  'smtp_port' => 587,
+  'from_email' => 'noreply@smartpitchhub.com',
+  'from_name' => 'SmartPitchHub',
+
+  // Database Connection
+  'db_host' => 'localhost',
+  'db_user' => 'root',
+  'db_pass' => '',
+  'db_name' => 'smartpitchhub-1',
+
+  // Admin Credentials (for internal use)
+  'admin_username' => 'admin',
+  'admin_password' => 'admin_secure_pass',
+
+  // Environment (development or production)
+  'env' => 'development',
+  'base_url' => 'http://localhost/SmartPitchHub-1'
+];
